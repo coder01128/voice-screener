@@ -1,0 +1,20 @@
+{
+  "_sources": {
+    "stt.model": "developers.deepgram.com/docs/models-languages-overview (Nova-3, checked 27 Oct 2026)",
+    "llm.model": "ai.google.dev/gemini-api/docs/models (Gemini 3.5 Flash-Lite, stable, checked 27 Oct 2026)",
+    "tts.model": "elevenlabs.io/docs/models (Flash v2.5, checked 27 Oct 2026)"
+  },
+  "stt": {
+    "model": "nova-3-general"
+  },
+  "llm": {
+    "model": "gemini-3.5-flash-lite"
+  },
+  "tts": {
+    "model": "eleven_flash_v2_5"
+  },
+  "prompts": {
+    "system": "You are a friendly assistant. Keep every reply to one or two short sentences.",
+    "greeting": "Greet the user in one short sentence and ask how you can help."
+  }
+}
