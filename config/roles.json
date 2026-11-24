@@ -1,0 +1,112 @@
+{
+  "_note": "Synthetic roles. Ids must match config/personas/expected.json. Every requirement has a follow_up_question, asked when a must-have can't be judged from the call.",
+  "roles": [
+    {
+      "id": "react_developer",
+      "title": "Junior React Developer",
+      "summary": "Building customer-facing web screens in React for a South African fintech. Fully remote within South Africa.",
+      "must_haves": [
+        {
+          "id": "react_experience",
+          "text": "At least one year of professional React development experience.",
+          "follow_up_question": "How long have you worked with React professionally, and on what?"
+        },
+        {
+          "id": "remote_ok",
+          "text": "Willing to work fully remote from within South Africa.",
+          "follow_up_question": "Are you happy to work fully remote, and are you based in South Africa?"
+        },
+        {
+          "id": "notice_two_months",
+          "text": "Notice period of two months or less.",
+          "follow_up_question": "What is your notice period?"
+        }
+      ],
+      "nice_to_haves": [
+        {
+          "id": "customer_features",
+          "text": "Has built customer-facing features.",
+          "follow_up_question": "Have you built anything customers use directly?"
+        },
+        {
+          "id": "backend_interest",
+          "text": "Interested in growing into backend work (Node.js, APIs).",
+          "follow_up_question": "Would you like to do backend work, such as Node.js or APIs?"
+        }
+      ]
+    },
+    {
+      "id": "data_engineer",
+      "title": "Data Engineer",
+      "summary": "Designing and running data pipelines for a retailer. Hybrid, at the Johannesburg office two or three days a week.",
+      "must_haves": [
+        {
+          "id": "sql",
+          "text": "Strong, hands-on SQL.",
+          "follow_up_question": "How do you use SQL in your work today?"
+        },
+        {
+          "id": "pipelines",
+          "text": "Builds and maintains data pipelines.",
+          "follow_up_question": "Which data pipelines have you built or maintained?"
+        },
+        {
+          "id": "cloud_platform",
+          "text": "Hands-on experience with a cloud data platform: AWS, Azure or Google Cloud.",
+          "follow_up_question": "Which cloud data platform have you worked on (AWS, Azure or Google Cloud), and what did you build there?"
+        },
+        {
+          "id": "hybrid_johannesburg",
+          "text": "Can work hybrid from the Johannesburg office.",
+          "follow_up_question": "Can you work from our Johannesburg office two or three days a week?"
+        }
+      ],
+      "nice_to_haves": [
+        {
+          "id": "pipeline_design",
+          "text": "Wants to design pipelines, not only maintain them.",
+          "follow_up_question": "Would you like to design new pipelines as well as run existing ones?"
+        },
+        {
+          "id": "five_years",
+          "text": "Five or more years in data engineering.",
+          "follow_up_question": "How many years have you worked in data engineering?"
+        }
+      ]
+    },
+    {
+      "id": "operations_coordinator",
+      "title": "Operations Coordinator",
+      "summary": "Coordinating deliveries and suppliers for a growing tech company's warehouse operation. Hybrid, based in Pretoria.",
+      "must_haves": [
+        {
+          "id": "operations_experience",
+          "text": "Experience coordinating operations or logistics, such as deliveries, drivers or warehouses.",
+          "follow_up_question": "What operations or logistics work have you coordinated?"
+        },
+        {
+          "id": "problem_solving",
+          "text": "Has solved operational problems under pressure, with a concrete example.",
+          "follow_up_question": "Tell me about a time you fixed an operational problem under pressure."
+        },
+        {
+          "id": "pretoria_hybrid",
+          "text": "Can work hybrid or in the office in Pretoria.",
+          "follow_up_question": "Can you work from our Pretoria office at least part of the week?"
+        }
+      ],
+      "nice_to_haves": [
+        {
+          "id": "reporting",
+          "text": "Keeps operational reports or spreadsheets up to date.",
+          "follow_up_question": "Do you keep any reports or spreadsheets for your work?"
+        },
+        {
+          "id": "tech_interest",
+          "text": "Interested in working at a tech company.",
+          "follow_up_question": "What draws you to working at a tech company?"
+        }
+      ]
+    }
+  ]
+}

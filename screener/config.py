@@ -39,6 +39,11 @@ class VoiceConfig:
     # under this cap. Free tier for our Flash-Lite model: 15 per minute per
     # project per model (from Google's 429 response, Nov 2026).
     llm_max_requests_per_minute: int
+    # When a post-call request (profile, matching) errors, e.g. 503 "model is
+    # experiencing high demand", retry up to this many times, waiting
+    # retry_wait_secs and doubling it each time (screener.postcall).
+    llm_post_call_retry_wait_secs: float
+    llm_post_call_error_retries: int
 
 
 def read_json(path: Path) -> dict:
@@ -76,6 +81,12 @@ def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
     rpm = llm.get("max_requests_per_minute")
     if isinstance(rpm, bool) or not isinstance(rpm, int) or rpm <= 0:
         raise ConfigError(f"{path.name}: 'llm.max_requests_per_minute' must be a positive whole number")
+    wait = llm.get("post_call_retry_wait_secs")
+    if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0:
+        raise ConfigError(f"{path.name}: 'llm.post_call_retry_wait_secs' must be zero or more")
+    error_retries = llm.get("post_call_error_retries")
+    if isinstance(error_retries, bool) or not isinstance(error_retries, int) or error_retries < 0:
+        raise ConfigError(f"{path.name}: 'llm.post_call_error_retries' must be a whole number, zero or more")
 
     return VoiceConfig(
         stt_model=require_str(data, "stt.model", path.name),
@@ -84,6 +95,8 @@ def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
         llm_retry_if_slow_to_start=retry,
         llm_first_reply_timeout_secs=float(timeout),
         llm_max_requests_per_minute=rpm,
+        llm_post_call_retry_wait_secs=float(wait),
+        llm_post_call_error_retries=error_retries,
     )
 
 

@@ -6,8 +6,10 @@ Usage:
 
 Uses Gemini only (no Deepgram, no ElevenLabs). The interviewer is built by the
 same code as the voice bot. Each run saves profiles/<timestamp>-sim-<persona>/
-and prints how many Gemini requests it used. Run it once per change, not in a
-loop: the free tier is the budget.
+with transcript, profile and role matches, checks them against the persona's
+ground truth and config/personas/expected.json, and prints how many Gemini
+requests it used. Run it once per change, not in a loop: the free tier is the
+budget.
 """
 
 import argparse
@@ -23,10 +25,12 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from screener.call_end import end_interview_schema
 from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, require_env
-from screener.ground_truth import check_against_ground_truth, load_ground_truth
+from screener.ground_truth import check_against_expected, check_against_ground_truth, load_expected, load_ground_truth
 from screener.interview import load_interview_config
 from screener.llm import Reply, RequestCounter, interviewer_llm, persona_llm, reply
+from screener.matching import describe_matches, load_matching_config, load_roles, match_call
 from screener.personas import build_persona_prompt, list_personas, load_card, load_simulation_config
+from screener.postcall import with_error_retries
 from screener.profile import describe_profile, load_schema, profile_call
 from screener.simulation import run_simulated_call
 from screener.transcript import INTERVIEWER, now_iso
@@ -57,11 +61,15 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool, bool]:
     persona_requests = RequestCounter(persona)
     end_tool = end_interview_schema(interview.prompt.end_tool_name, interview.prompt.end_tool_description)
 
+    retries, wait = voice.llm_post_call_error_retries, voice.llm_post_call_retry_wait_secs
+
     async def interviewer_turn(messages: list[dict]) -> Reply:
-        return await reply(interviewer, LLMContext(messages=messages, tools=[end_tool]))
+        return await with_error_retries(
+            "Interviewer", lambda: reply(interviewer, LLMContext(messages=messages, tools=[end_tool])), retries, wait)
 
     async def persona_turn(messages: list[dict]) -> str:
-        return (await reply(persona, LLMContext(messages=messages))).text
+        r = await with_error_retries("Persona", lambda: reply(persona, LLMContext(messages=messages)), retries, wait)
+        return r.text
 
     def show(speaker: str, text: str):
         who = interview.agent_name.upper() if speaker == INTERVIEWER else card["name"].upper()
@@ -116,10 +124,24 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool, bool]:
         checks_ok = all(c.passed for c in checks) and not profile_result["evidence_errors"]
         print(f"  => {'all fields pass' if checks_ok else 'some checks failed'}")
 
-    total = requests_used() + profile_requests
-    print(f"\nGemini requests used: {total} "
-          f"(interviewer {interviewer_requests.count}, persona {persona_requests.count}, profile {profile_requests})")
-    return total, True, checks_ok
+    roles, matching_cfg = load_roles(), load_matching_config()
+    matches, match_requests = await match_call(out_dir, api_key, roles=roles)
+    print()
+    print("\n".join(describe_matches(matches)))
+    matches_ok = matches["status"] == "valid"
+    if matches_ok:
+        expected = load_expected(persona_id, {r.id for r in roles}, set(matching_cfg.outcomes.values()))
+        print(f"\nExpected-outcome check ({card['name']}):")
+        outcome_checks = check_against_expected(matches, expected)
+        for c in outcome_checks:
+            print(f"  {'PASS' if c.passed else 'FAIL'}  {c.field}: {c.reason}")
+        matches_ok = all(c.passed for c in outcome_checks)
+        print(f"  => {'all outcomes as expected' if matches_ok else 'some outcomes differ'}")
+
+    total = requests_used() + profile_requests + match_requests
+    print(f"\nGemini requests used: {total} (interviewer {interviewer_requests.count}, "
+          f"persona {persona_requests.count}, profile {profile_requests}, matching {match_requests})")
+    return total, True, checks_ok and matches_ok
 
 
 async def main() -> int:

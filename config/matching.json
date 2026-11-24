@@ -1,0 +1,36 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "thinking_level": "minimal",
+  "ratings": {
+    "met": "met",
+    "partly_met": "partly met",
+    "not_met": "not met",
+    "unknown": "unknown"
+  },
+  "outcomes": {
+    "advance": "advance",
+    "follow_up": "follow up",
+    "not_a_fit": "not a fit"
+  },
+  "pending_status": "pending",
+  "system_template": [
+    "You compare a screening-call transcript with job requirements. For every requirement of every role, give a rating, the evidence and a one-line reason. Reply with JSON that matches the schema you are given.",
+    "",
+    "Ratings:",
+    "- \"{met}\": the candidate said something that clearly satisfies the requirement.",
+    "- \"{partly_met}\": the candidate said something that satisfies part of it.",
+    "- \"{not_met}\": the candidate said something that rules it out.",
+    "- \"{unknown}\": the candidate never addressed it, or what they said is unclear. If the transcript is silent on a requirement, rate it \"{unknown}\", never \"{not_met}\".",
+    "",
+    "Rules:",
+    "- Use only what the candidate said. Do not assume what they might have done from their job title, industry or general knowledge.",
+    "- A broader statement counts. If the candidate said something that rules out a whole area (for example, that they have no experience of any kind in a field), every requirement inside that area is \"{not_met}\", citing that turn, even if the requirement's exact words never came up. Likewise a broader statement that covers a requirement can make it \"{met}\".",
+    "- Evidence is the list of turn numbers (the N in [turn N]) where the candidate said it. Cite the candidate's own turns. A \"{unknown}\" rating cites no turns.",
+    "- The reason is one short, neutral sentence. No opinions about the candidate.",
+    "",
+    "Roles:",
+    "{roles}"
+  ],
+  "role_template": "Role {id}: {title}. {summary}\n  Must-haves:\n{must_haves}\n  Nice-to-haves:\n{nice_to_haves}",
+  "requirement_line_template": "    - {id}: {text}"
+}

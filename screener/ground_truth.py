@@ -45,6 +45,42 @@ def load_ground_truth(persona_id: str, schema: dict) -> dict:
     return truth
 
 
+EXPECTED_PATH = PERSONAS_DIR / "expected.json"
+
+
+def load_expected(persona_id: str, role_ids: set[str], outcome_labels: set[str]) -> dict:
+    """The persona's expected outcomes, checked against roles.json and the outcome vocabulary."""
+    expected = read_json(EXPECTED_PATH).get(persona_id)
+    if not isinstance(expected, dict) or not expected:
+        raise ConfigError(f"{EXPECTED_PATH.name}: no expected outcomes for '{persona_id}'")
+    unknown_roles = [r for r in expected if r not in role_ids]
+    if unknown_roles:
+        raise ConfigError(f"{EXPECTED_PATH.name}: role ids not in roles.json: {', '.join(unknown_roles)}")
+    bad = [f"{r}={e.get('outcome')!r}" for r, e in expected.items() if e.get("outcome") not in outcome_labels]
+    if bad:
+        raise ConfigError(f"{EXPECTED_PATH.name}: outcomes not in matching.json: {', '.join(bad)}")
+    return expected
+
+
+def check_against_expected(matches: dict, expected: dict) -> list[FieldCheck]:
+    by_role = {r["role_id"]: r for r in matches.get("roles", [])}
+    checks = []
+    for role_id, want in expected.items():
+        rec = by_role[role_id]["recommendation"] if role_id in by_role else None
+        if rec is None:
+            checks.append(FieldCheck(role_id, False, "role missing from matches"))
+            continue
+        problems = []
+        if rec["outcome"] != want["outcome"]:
+            problems.append(f"got {rec['outcome']!r}, expected {want['outcome']!r}")
+        mention = want.get("follow_up_must_mention")
+        if mention and not any(mention.lower() in q.lower() for q in rec["follow_up_questions"]):
+            problems.append(f"no follow-up question mentions {mention!r}")
+        detail = f"{rec['outcome']}" + (f"; asks: {' / '.join(rec['follow_up_questions'])}" if rec["follow_up_questions"] else "")
+        checks.append(FieldCheck(role_id, not problems, "; ".join(problems) if problems else detail))
+    return checks
+
+
 def field_text(profile: dict, name: str) -> str:
     def strings(node) -> list[str]:
         if isinstance(node, str):

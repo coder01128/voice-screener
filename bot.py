@@ -8,8 +8,10 @@ The interview script comes from config/interview.json via screener.interview,
 the same code simulate.py uses. The bot ends the call itself, in code
 (screener.call_end), either when the LLM calls the end-interview tool after the
 last topic or when the call-length limit is reached. The transcript is saved to
-profiles/<call id>/ when the call ends, however it ends, and the candidate
-profile is built from it (screener.profile, same code as simulate.py).
+profiles/<call id>/ when the call ends, however it ends, then the candidate
+profile and role matches are built from it (screener.profile and
+screener.matching, the same code simulate.py uses). Recommendations start as
+pending; nothing is sent anywhere.
 
 Run with:  uv run bot.py -t webrtc   then open http://localhost:7860/client
 """
@@ -44,6 +46,7 @@ from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, requir
 from screener.interview import build_opening_line, load_interview_config
 from screener.latency import LatencyLog
 from screener.llm import interviewer_llm
+from screener.matching import match_call
 from screener.profile import profile_call
 from screener.transcript import CANDIDATE, INTERVIEWER, TranscriptRecorder, now_iso
 from screener.turns import candidate_turn_strategies
@@ -198,6 +201,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             )
         except Exception as e:
             logger.error(f"Session {call_id}: profile step failed: {type(e).__name__}: {e}")
+        try:
+            matches, requests = await match_call(call["out_dir"], env["GOOGLE_API_KEY"])
+            outcomes = ", ".join(f"{r['role_id']}={r['recommendation']['outcome']}" for r in matches["roles"])
+            logger.info(
+                f"Session {call_id}: matches {matches['status']} ({outcomes or 'none'}), "
+                f"all pending human approval, {requests} Gemini request(s)"
+            )
+        except Exception as e:
+            logger.error(f"Session {call_id}: matching step failed: {type(e).__name__}: {e}")
 
 
 async def bot(runner_args: RunnerArguments):

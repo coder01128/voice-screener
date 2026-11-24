@@ -7,12 +7,12 @@
     "day_to_day": "Schedules deliveries, sorts out problems with drivers and warehouses, and keeps the weekly delivery reports up to date in spreadsheets.",
     "strongest_skill": "Organising operations and solving problems under pressure.",
     "skill_example": "During a fuel strike, re-planned a week of deliveries so that every hospital client still got their stock on time.",
-    "wants_next": "To move into tech. Has no coding experience, but is curious about tech companies.",
+    "wants_next": "To move into tech. Has no coding experience at all and says so plainly when talking about what she wants next, but is curious about tech companies.",
     "work_arrangement": "Prefers hybrid but is open to the office.",
     "location": "Pretoria.",
-    "notice_period": "First says one month. Later in the call, corrects it: it is actually two months.",
+    "notice_period": "When asked, says one month. Then, at the very start of her next answer, whatever the question, corrects it: she just checked and it is actually two months.",
     "salary_stance": "Happy to share: about R32,000 a month.",
-    "behaviour": "Changes her answer on notice period mid-call: says one month, then later says she checked and it is two months."
+    "behaviour": "Changes her answer on notice period: first says one month, then opens her very next answer by correcting it to two months. Always make this correction."
   },
   "ground_truth": {
     "summary": {

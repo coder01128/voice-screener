@@ -341,6 +341,8 @@ def check_voice_config():
         "zero timeout": lambda d: d["llm"].__setitem__("first_reply_timeout_secs", 0),
         "missing timeout": lambda d: d["llm"].pop("first_reply_timeout_secs"),
         "zero requests per minute": lambda d: d["llm"].__setitem__("max_requests_per_minute", 0),
+        "negative retry wait": lambda d: d["llm"].__setitem__("post_call_retry_wait_secs", -1),
+        "fractional error retries": lambda d: d["llm"].__setitem__("post_call_error_retries", 1.5),
     }
     with tempfile.TemporaryDirectory() as tmp:
         bom = Path(tmp) / "bom.json"
@@ -825,6 +827,213 @@ async def check_rate_limiter():
           llm._stream_content.__name__ == "paced" and persona._stream_content.__name__ == "paced")
 
 
+# ---------------------------------------------------------------- matching (Ticket 04)
+def ratings_reply(schema: dict, cfg, overrides: dict | None = None) -> str:
+    """A reply rating every requirement in the schema 'met' (turn 2), with overrides."""
+    overrides = overrides or {}
+    out = {}
+    for role_id, role in schema["properties"].items():
+        out[role_id] = {}
+        for req_id in role["properties"]:
+            rating, evidence = overrides.get((role_id, req_id), (cfg.ratings["met"], [2]))
+            out[role_id][req_id] = {"rating": rating, "evidence": evidence, "reason": "x"}
+    return json.dumps(out)
+
+
+def check_roles_config():
+    section("Roles and matching config")
+    from jsonschema import Draft202012Validator
+
+    from screener.ground_truth import load_expected
+    from screener.matching import build_matching_prompt, load_matching_config, load_roles, reply_schema
+    from screener.personas import list_personas
+
+    roles, cfg = load_roles(), load_matching_config()
+    check("roles.json loads", True, ", ".join(r.id for r in roles))
+    for pid in list_personas():
+        load_expected(pid, {r.id for r in roles}, set(cfg.outcomes.values()))
+    check("every role id and outcome in expected.json exists in roles.json / matching.json", True)
+    data_role = next(r for r in roles if r.id == "data_engineer")
+    cloud = [q for q in data_role.requirements if "cloud" in q.text.lower()]
+    check("data engineer has a cloud must-have whose follow-up question names cloud",
+          len(cloud) == 1 and cloud[0].must_have and "cloud" in cloud[0].follow_up_question.lower())
+
+    prompt = build_matching_prompt(roles, cfg)
+    check("prompt lists every role and requirement",
+          all(r.id in prompt and all(q.id in prompt and q.text in prompt for q in r.requirements) for r in roles))
+    check("prompt defines every rating and has no unfilled placeholders",
+          all(f'"{label}"' in prompt for label in cfg.ratings.values()) and "{" not in prompt and "}" not in prompt)
+    schema = reply_schema(roles, cfg)
+    Draft202012Validator.check_schema(schema)
+    check("reply schema requires every requirement of every role, ratings from config only",
+          all(set(schema["properties"][r.id]["required"]) == {q.id for q in r.requirements} for r in roles)
+          and schema["properties"][roles[0].id]["properties"][roles[0].requirements[0].id]["properties"]["rating"]["enum"]
+          == list(cfg.ratings.values()))
+    src = (ROOT / "screener/matching.py").read_text(encoding="utf-8")
+    check("matching reads transcript.json only (never call.json or mode)", '"call.json"' not in src and '"mode"' not in src)
+
+
+def check_recommendation_rule():
+    section("Recommendation rule (computed in code)")
+    from screener.matching import Requirement, Role, load_matching_config, recommend
+
+    cfg = load_matching_config()
+    met, partly, not_met, unknown = (cfg.ratings[k] for k in ("met", "partly_met", "not_met", "unknown"))
+    role = Role("r", "R", "s", (
+        Requirement("a", "A", "Ask about A?", True),
+        Requirement("b", "B", "Ask about B?", True),
+        Requirement("n", "N", "Ask about N?", False),
+    ))
+
+    def outcome(a, b, n=met):
+        return recommend(role, {"a": a, "b": b, "n": n}, cfg)
+
+    check("all must-haves met -> advance", outcome(met, met) == (cfg.outcomes["advance"], []))
+    check("must-have partly met -> advance (spec rule)", outcome(partly, met)[0] == cfg.outcomes["advance"])
+    check("must-have unknown -> follow up, asking that requirement's question",
+          outcome(met, unknown) == (cfg.outcomes["follow_up"], ["Ask about B?"]))
+    check("must-have not met -> not a fit, even with another unknown", outcome(not_met, unknown)[0] == cfg.outcomes["not_a_fit"])
+    check("nice-to-have not met doesn't change the outcome", outcome(met, met, not_met)[0] == cfg.outcomes["advance"])
+
+
+async def check_matching_paths():
+    section("Matching step: evidence guard, valid/retry/invalid paths (fake Gemini)")
+    from screener.ground_truth import check_against_expected
+    from screener.matching import build_matches, load_matching_config, load_roles, reply_schema
+
+    roles, cfg = load_roles(), load_matching_config()
+    schema = reply_schema(roles, cfg)
+    data_role = next(r for r in roles if r.id == "data_engineer")
+    cloud_id = next(q.id for q in data_role.requirements if "cloud" in q.text.lower())
+
+    with tempfile.TemporaryDirectory() as tmp:
+        call_dir = write_call(Path(tmp))
+        reply = ratings_reply(schema, cfg, {("data_engineer", cloud_id): (cfg.ratings["unknown"], [])})
+        r = await build_matches(call_dir, fake_generate([reply]))
+        saved = json.loads((call_dir / "matches.json").read_text(encoding="utf-8"))
+        de = next(x for x in saved["roles"] if x["role_id"] == "data_engineer")
+        check("valid reply: saved, every recommendation pending",
+              saved["status"] == "valid" and all(x["recommendation"]["status"] == cfg.pending_status for x in saved["roles"]))
+        check("cloud unknown -> data engineer follow up, question names cloud",
+              de["recommendation"]["outcome"] == cfg.outcomes["follow_up"]
+              and "cloud" in " ".join(de["recommendation"]["follow_up_questions"]).lower())
+        expected = {"data_engineer": {"outcome": cfg.outcomes["follow_up"], "follow_up_must_mention": "cloud"}}
+        check("expected-outcome checker passes it", all(c.passed for c in check_against_expected(r, expected)))
+        wrong = {"data_engineer": {"outcome": cfg.outcomes["advance"]}}
+        check("expected-outcome checker fails a different outcome", not check_against_expected(r, wrong)[0].passed)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reply = ratings_reply(schema, cfg, {("data_engineer", cloud_id): (cfg.ratings["met"], [])})
+        r = await build_matches(write_call(Path(tmp)), fake_generate([reply]))
+        de = next(x for x in r["roles"] if x["role_id"] == "data_engineer")
+        q = next(x for x in de["requirements"] if x["id"] == cloud_id)
+        check("'met' with no evidence is counted as unknown and flagged",
+              q["rating_used"] == cfg.ratings["unknown"] and de["recommendation"]["outcome"] == cfg.outcomes["follow_up"]
+              and any(e["requirement"] == cloud_id for e in r["evidence_errors"]))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reply = ratings_reply(schema, cfg, {("data_engineer", cloud_id): (cfg.ratings["not_met"], [1])})
+        r = await build_matches(write_call(Path(tmp)), fake_generate([reply]))
+        de = next(x for x in r["roles"] if x["role_id"] == "data_engineer")
+        check("'not met' citing only the interviewer is counted as unknown (no not-a-fit on a guess)",
+              de["recommendation"]["outcome"] == cfg.outcomes["follow_up"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        reply = ratings_reply(schema, cfg, {("data_engineer", cloud_id): (cfg.ratings["met"], [77])})
+        r = await build_matches(write_call(Path(tmp)), fake_generate([reply]))
+        check("cited turn that doesn't exist is flagged", any("77" in e["problem"] for e in r["evidence_errors"]))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_matches(write_call(Path(tmp)), fake_generate(["{bad", ratings_reply(schema, cfg)]))
+        check("bad first reply: retried once, then valid", r["status"] == "valid" and r["attempts"] == 2)
+    import time
+    busy = RuntimeError("503 UNAVAILABLE")
+    with tempfile.TemporaryDirectory() as tmp:
+        start = time.monotonic()
+        r = await build_matches(write_call(Path(tmp)),
+                                fake_generate([busy, busy, busy, ratings_reply(schema, cfg)]),
+                                error_retries=3, error_wait_secs=0.05)
+        waited = time.monotonic() - start
+        check("three 503s, then success: retried with growing waits (0.05+0.1+0.2s)",
+              r["status"] == "valid" and r["attempts"] == 4 and waited >= 0.35, f"waited {waited:.2f}s")
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_matches(write_call(Path(tmp)), fake_generate([busy] * 4), error_retries=3, error_wait_secs=0)
+        check("request errors past the limit: invalid after 1 + 3 tries, no crash",
+              r["status"] == "invalid" and r["attempts"] == 4 and "503" in r["validation_errors"][0])
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_matches(write_call(Path(tmp)), fake_generate(["{bad", "{bad", ratings_reply(schema, cfg)]),
+                                error_retries=3, error_wait_secs=0)
+        check("an invalid reply is still retried only once, however many error retries are allowed",
+              r["status"] == "invalid" and r["attempts"] == 2)
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_matches(write_call(Path(tmp)), fake_generate([busy, "{bad", ratings_reply(schema, cfg)]),
+                                error_retries=3, error_wait_secs=0)
+        check("an error doesn't use up the one retry for an invalid reply",
+              r["status"] == "valid" and r["attempts"] == 3)
+
+    from screener.postcall import with_error_retries
+    calls = []
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) < 3:
+            raise busy
+        return "ok"
+
+    got = await with_error_retries("Persona", flaky, error_retries=3, error_wait_secs=0)
+    check("simulated turn: 503s are retried, the conversation carries on", got == "ok" and len(calls) == 3)
+    calls.clear()
+
+    async def always_busy():
+        calls.append(1)
+        raise busy
+
+    try:
+        await with_error_retries("Interviewer", always_busy, error_retries=2, error_wait_secs=0)
+        check("simulated turn: gives up (raises) after the retry limit", False)
+    except RuntimeError:
+        check("simulated turn: gives up (raises) after the retry limit", len(calls) == 3)
+    with tempfile.TemporaryDirectory() as tmp:
+        missing = json.loads(ratings_reply(schema, cfg))
+        missing.pop(roles[0].id)
+        call_dir = write_call(Path(tmp))
+        r = await build_matches(call_dir, fake_generate([json.dumps(missing)] * 2))
+        check("invalid twice: saved as invalid with the raw reply, no recommendations, no crash",
+              r["status"] == "invalid" and r["raw_output"] and r["roles"] == [] and (call_dir / "matches.json").exists())
+
+
+async def check_roles_edit_changes_outcome():
+    section("Editing a must-have in roles.json changes the outcome (no code change)")
+    from screener.matching import build_matches, load_matching_config, load_roles, reply_schema
+
+    cfg = load_matching_config()
+    raw = json.loads((ROOT / "config/roles.json").read_text(encoding="utf-8"))
+    react = next(r for r in raw["roles"] if r["id"] == "react_developer")
+    moved = react["nice_to_haves"].pop()
+    react["must_haves"].append(moved)  # a nice-to-have becomes a must-have
+
+    with tempfile.TemporaryDirectory() as tmp:
+        edited = Path(tmp) / "roles.json"
+        edited.write_text(json.dumps(raw), encoding="utf-8")
+        before_roles, after_roles = load_roles(), load_roles(edited)
+        override = {("react_developer", moved["id"]): (cfg.ratings["not_met"], [2])}
+        (Path(tmp) / "before").mkdir()
+        (Path(tmp) / "after").mkdir()
+        before = await build_matches(write_call(Path(tmp) / "before"),
+                                     fake_generate([ratings_reply(reply_schema(before_roles, cfg), cfg, override)]),
+                                     roles=before_roles)
+        after = await build_matches(write_call(Path(tmp) / "after"),
+                                    fake_generate([ratings_reply(reply_schema(after_roles, cfg), cfg, override)]),
+                                    roles=after_roles)
+
+    def react_outcome(r):
+        return next(x for x in r["roles"] if x["role_id"] == "react_developer")["recommendation"]["outcome"]
+
+    check("same ratings: advance before the edit, not a fit after it",
+          react_outcome(before) == cfg.outcomes["advance"] and react_outcome(after) == cfg.outcomes["not_a_fit"],
+          f"{react_outcome(before)} -> {react_outcome(after)}")
+
+
 async def main():
     check_voice_config()
     await check_gemini_retry()
@@ -845,6 +1054,10 @@ async def main():
     await check_profile_paths()
     check_evidence_rules()
     check_ground_truth()
+    check_roles_config()
+    check_recommendation_rule()
+    await check_matching_paths()
+    await check_roles_edit_changes_outcome()
     print(f"\n{sum(results)}/{len(results)} passed")
     return all(results)
 

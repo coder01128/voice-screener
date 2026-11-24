@@ -25,11 +25,11 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from screener.config import PROJECT_ROOT, ConfigError, read_json, require_str
+from screener.postcall import request_valid_json
 from screener.transcript import CANDIDATE, now_iso
 
 SCHEMA_PATH = PROJECT_ROOT / "config" / "profile.schema.json"
 EXTRACTION_CONFIG_PATH = PROJECT_ROOT / "config" / "extraction.json"
-MAX_ATTEMPTS = 2  # first try plus one retry, per the spec
 EVIDENCE = "evidence"
 
 # (system prompt, user text, response schema) -> raw model text
@@ -142,54 +142,35 @@ async def build_profile(
     generate: Generate,
     schema: dict | None = None,
     ext: ExtractionConfig | None = None,
+    error_retries: int = 0,
+    error_wait_secs: float = 0.0,
 ) -> dict:
-    """Extracts, validates and saves profile.json in call_dir. Never raises for a bad model reply."""
+    """Extracts, validates and saves profile.json in call_dir. Never raises for a bad model reply.
+
+    Retry policy (screener.postcall): an invalid reply is retried once; a request
+    that errors is retried up to error_retries times with a growing wait.
+    """
     schema = schema if schema is not None else load_schema()
     ext = ext if ext is not None else load_extraction_config()
     turns = json.loads((call_dir / "transcript.json").read_text(encoding="utf-8"))
 
-    system = build_extraction_prompt(schema, ext)
-    user = format_transcript(turns, ext)
-    sent_schema = schema_for_gemini(schema)
-
+    outcome = await request_valid_json(
+        "Profile", generate,
+        build_extraction_prompt(schema, ext), format_transcript(turns, ext), schema_for_gemini(schema),
+        validate=lambda data: validate_profile(data, schema),
+        error_retries=error_retries, error_wait_secs=error_wait_secs,
+    )
     result: dict = {
-        "status": "invalid",
+        "status": "valid" if outcome.valid else "invalid",
         "call_id": call_dir.name,
-        "generated_at": None,
+        "generated_at": now_iso(),
         "model": ext.model,
-        "attempts": 0,
-        "profile": None,
-        "evidence_errors": [],
-        "validation_errors": [],
-        "raw_output": None,
+        "attempts": outcome.attempts,
+        "profile": outcome.data,
+        "evidence_errors": check_evidence(outcome.data, schema, turns, ext.not_discussed) if outcome.valid else [],
+        "validation_errors": outcome.errors,
+        "raw_output": outcome.raw_output,
     }
-    for _ in range(MAX_ATTEMPTS):
-        result["attempts"] += 1
-        try:
-            raw = await generate(system, user, sent_schema)
-        except Exception as e:
-            result["validation_errors"] = [f"request failed: {type(e).__name__}: {e}"]
-            continue
-        result["raw_output"] = raw
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            result["validation_errors"] = [f"reply is not valid JSON: {e}"]
-            continue
-        errors = validate_profile(data, schema)
-        if errors:
-            result["validation_errors"] = errors
-            continue
-        result.update(
-            status="valid",
-            profile=data,
-            evidence_errors=check_evidence(data, schema, turns, ext.not_discussed),
-            validation_errors=[],
-            raw_output=None,
-        )
-        break
-
-    result["generated_at"] = now_iso()
     (call_dir / "profile.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     return result
 
@@ -203,9 +184,11 @@ async def profile_call(call_dir: Path, api_key: str, schema: dict | None = None)
     from screener.llm import JsonGenerator  # local import keeps this module light for offline checks
 
     ext = load_extraction_config()
-    per_minute = load_voice_config().llm_max_requests_per_minute
-    generate = JsonGenerator(api_key, ext.model, ext.thinking_level, per_minute)
-    result = await build_profile(call_dir, generate, schema=schema, ext=ext)
+    voice = load_voice_config()
+    generate = JsonGenerator(api_key, ext.model, ext.thinking_level, voice.llm_max_requests_per_minute)
+    result = await build_profile(call_dir, generate, schema=schema, ext=ext,
+                                 error_retries=voice.llm_post_call_error_retries,
+                                 error_wait_secs=voice.llm_post_call_retry_wait_secs)
     return result, generate.requests
 
 
