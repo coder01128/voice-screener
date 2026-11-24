@@ -120,10 +120,8 @@ You should see `uv` followed by a version number.
 
 ### 2. Get the code and install it
 
-Replace the URL with this repo's URL.
-
 ```powershell
-git clone https://github.com/<owner>/voice-screener.git
+git clone https://github.com/coder01128/voice-screener.git
 ```
 
 ```powershell
