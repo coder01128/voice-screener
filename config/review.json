@@ -1,0 +1,8 @@
+{
+  "port": 7870,
+  "voice_page_url": "http://localhost:7860/client",
+  "decisions": {
+    "approve": "approved",
+    "reject": "rejected"
+  }
+}

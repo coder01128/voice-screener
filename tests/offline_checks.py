@@ -1034,6 +1034,100 @@ async def check_roles_edit_changes_outcome():
           f"{react_outcome(before)} -> {react_outcome(after)}")
 
 
+# ---------------------------------------------------------------- review page (Ticket 05)
+def make_review_calls(root: Path, schema: dict, mcfg) -> list[str]:
+    """Three fake call folders with transcript, call, profile and matches (no real data)."""
+    from screener.matching import load_roles, score
+
+    roles = load_roles()
+    ids = []
+    for i, started in enumerate(["2026-11-20T09:00:00.000+00:00", "2026-11-22T09:00:00.000+00:00",
+                                 "2026-11-21T09:00:00.000+00:00"]):
+        call_id = f"2026112{i}-090000-test"
+        d = root / call_id
+        d.mkdir(parents=True)
+        turns = [{"turn": n, "speaker": INTERVIEWER if n % 2 else CANDIDATE, "text": f"line {n}",
+                  "started_at": started} for n in range(1, 7)]
+        (d / "transcript.json").write_text(json.dumps(turns), encoding="utf-8")
+        (d / "call.json").write_text(json.dumps({"call_id": call_id, "mode": "simulated", "started_at": started}),
+                                     encoding="utf-8")
+        (d / "profile.json").write_text(json.dumps({"status": "valid", "profile": sample_profile(schema),
+                                                    "evidence_errors": []}), encoding="utf-8")
+        ratings = json.loads(ratings_reply(__import__("screener.matching", fromlist=["reply_schema"])
+                                           .reply_schema(roles, mcfg), mcfg))
+        scored, _ = score(ratings, roles, turns, mcfg)
+        (d / "matches.json").write_text(json.dumps({"status": "valid", "roles": scored}), encoding="utf-8")
+        ids.append(call_id)
+    bad = root / "20261123-090000-invalid"
+    bad.mkdir()
+    (bad / "transcript.json").write_text("[]", encoding="utf-8")
+    (bad / "matches.json").write_text(json.dumps({"status": "invalid", "roles": []}), encoding="utf-8")
+    return ids
+
+
+def check_review_server():
+    section("Review page server (temporary call folders, no real data)")
+    from fastapi.testclient import TestClient
+
+    from screener.matching import load_matching_config
+    from screener.profile import load_schema
+    from screener.review import create_app, load_review_config
+
+    schema, mcfg, rcfg = load_schema(), load_matching_config(), load_review_config()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        ids = make_review_calls(root, schema, mcfg)
+        client = TestClient(create_app(root))
+
+        page = client.get("/")
+        check("serves the single-file page", page.status_code == 200 and "Screening review" in page.text)
+        listed = [c["call_id"] for c in client.get("/api/calls").json()]
+        check("calls listed newest first", listed[:3] == [ids[1], ids[2], ids[0]], ", ".join(listed))
+        detail = client.get(f"/api/calls/{ids[0]}").json()
+        check("call detail has transcript, profile and matches",
+              len(detail["transcript"]) == 6 and detail["profile"]["status"] == "valid" and detail["matches"]["roles"])
+        check("schema endpoint is the real profile schema", client.get("/api/schema").json() == schema)
+        cfg = client.get("/api/config").json()
+        check("config gives the voice page link and decision words",
+              cfg["voice_page_url"] == rcfg.voice_page_url and cfg["decisions"]["approved"] == rcfg.approved)
+
+        role_id = detail["matches"]["roles"][0]["role_id"]
+        r = client.post(f"/api/calls/{ids[0]}/decision", json={"role_id": role_id, "decision": rcfg.approved})
+        saved = json.loads((root / ids[0] / "matches.json").read_text(encoding="utf-8"))
+        rec = next(x for x in saved["roles"] if x["role_id"] == role_id)["recommendation"]
+        check("approve: written to matches.json with a timestamp",
+              r.status_code == 200 and rec["status"] == rcfg.approved and rec["decided_at"])
+        again = client.get(f"/api/calls/{ids[0]}").json()
+        check("approve survives a reload",
+              next(x for x in again["matches"]["roles"] if x["role_id"] == role_id)["recommendation"]["status"]
+              == rcfg.approved)
+        others = [x for x in saved["roles"] if x["role_id"] != role_id]
+        check("other roles untouched", all(x["recommendation"]["status"] == mcfg.pending_status for x in others))
+        client.post(f"/api/calls/{ids[0]}/decision", json={"role_id": role_id, "decision": mcfg.pending_status})
+        saved = json.loads((root / ids[0] / "matches.json").read_text(encoding="utf-8"))
+        rec = next(x for x in saved["roles"] if x["role_id"] == role_id)["recommendation"]
+        check("undo: back to pending, timestamp cleared", rec["status"] == mcfg.pending_status and rec["decided_at"] is None)
+
+        check("unknown decision word rejected",
+              client.post(f"/api/calls/{ids[0]}/decision", json={"role_id": role_id, "decision": "hire"}).status_code == 400)
+        check("unknown role rejected",
+              client.post(f"/api/calls/{ids[0]}/decision", json={"role_id": "nope", "decision": rcfg.approved}).status_code == 404)
+        check("decision on a call with invalid matches refused",
+              client.post("/api/calls/20261123-090000-invalid/decision",
+                          json={"role_id": role_id, "decision": rcfg.approved}).status_code == 409)
+        check("unknown call: 404", client.get("/api/calls/20990101-000000-none").status_code == 404)
+        check("path tricks in the call id are refused",
+              client.get("/api/calls/..%5C..%5Cconfig").status_code in (400, 404)
+              and client.get("/api/calls/.env").status_code in (400, 404))
+
+    html = (ROOT / "review/review.html").read_text(encoding="utf-8")
+    quoted = [n for n in schema["properties"] if any(f"{q}{n}{q}" in html for q in ('"', "'", "`"))]
+    check("review page hard-codes no profile field name", quoted == [], ", ".join(quoted))
+    check("review page inserts data as text, never innerHTML", "innerHTML" not in html and "insertAdjacentHTML" not in html)
+    check("review page is one file with no external scripts or frameworks",
+          "<script src" not in html and "import " not in html.split("<script>")[1])
+
+
 async def main():
     check_voice_config()
     await check_gemini_retry()
@@ -1058,6 +1152,7 @@ async def main():
     check_recommendation_rule()
     await check_matching_paths()
     await check_roles_edit_changes_outcome()
+    check_review_server()
     print(f"\n{sum(results)}/{len(results)} passed")
     return all(results)
 

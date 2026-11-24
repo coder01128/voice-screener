@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screening Review</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --text: #14171f;
+    --muted: #4a5263;
+    --border: #c3c9d4;
+    --primary: #1d5bb8;
+    --primary-hover: #164a96;
+    --on-primary: #ffffff;
+    --danger: #a5251c;
+    --danger-hover-bg: #fbe9e7;
+    --chip-bg: #e3ecfa;
+    --chip-text: #163f80;
+    --chip-hover-bg: #cddcf5;
+    --selected-bg: #dde8fa;
+    --highlight-bg: #fff1a8;
+    --highlight-border: #9a7300;
+    --good-bg: #e2f3e7; --good-text: #135c30;
+    --warn-bg: #fff1d1; --warn-text: #7a4b00;
+    --bad-bg: #fde6e3; --bad-text: #9c2117;
+    --neutral-bg: #e9ecf1; --neutral-text: #343b49;
+    --focus: #1d5bb8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218;
+      --surface: #171b23;
+      --surface-2: #1f2430;
+      --text: #f1f3f7;
+      --muted: #b9c1cf;
+      --border: #3c4453;
+      --primary: #7aaeff;
+      --primary-hover: #a3c6ff;
+      --on-primary: #0b1424;
+      --danger: #ff9b90;
+      --danger-hover-bg: #3a1d1b;
+      --chip-bg: #1e3254;
+      --chip-text: #d3e3ff;
+      --chip-hover-bg: #2a4572;
+      --selected-bg: #223352;
+      --highlight-bg: #4a3e08;
+      --highlight-border: #f5d44a;
+      --good-bg: #173a24; --good-text: #b5f0c6;
+      --warn-bg: #3d2d08; --warn-text: #ffdf9a;
+      --bad-bg: #44191a; --bad-text: #ffc2bb;
+      --neutral-bg: #2a303c; --neutral-text: #e2e6ee;
+      --focus: #7aaeff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a, button { font: inherit; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  .topbar {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .topbar h1 { margin: 0; font-size: 19px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 40px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    font-weight: 600; text-decoration: none; border: 2px solid transparent;
+    transition: background-color .12s, border-color .12s, color .12s;
+  }
+  .btn-primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+  .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+  .btn-secondary { background: var(--surface); color: var(--primary); border-color: var(--primary); }
+  .btn-secondary:hover { background: var(--chip-bg); }
+  .btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger); }
+  .btn-danger:hover { background: var(--danger-hover-bg); }
+  .btn:disabled { cursor: progress; opacity: .75; }
+
+  .layout {
+    display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px;
+    max-width: 1280px; margin: 0 auto; padding: 16px;
+  }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+
+  .calls { padding: 12px; align-self: start; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .calls h2 { margin: 4px 4px 10px; font-size: 16px; }
+  .call-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .call-item {
+    width: 100%; text-align: left; cursor: pointer; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    transition: background-color .12s, border-color .12s;
+  }
+  .call-item:hover { background: var(--surface-2); border-color: var(--primary); }
+  .call-item[aria-current="true"] { background: var(--selected-bg); border-color: var(--primary); }
+  .call-name { font-weight: 650; overflow-wrap: anywhere; }
+  .call-meta { font-size: 13px; color: var(--muted); }
+  .call-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+  main { min-width: 0; display: grid; gap: 16px; align-content: start; }
+  section.panel { padding: 16px; }
+  section h2 { margin: 0 0 12px; font-size: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .call-title { margin: 0 0 4px; font-size: 21px; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+
+  .badge {
+    display: inline-block; font-size: 13px; font-weight: 650; line-height: 1.3;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .b-good { background: var(--good-bg); color: var(--good-text); }
+  .b-warn { background: var(--warn-bg); color: var(--warn-text); }
+  .b-bad { background: var(--bad-bg); color: var(--bad-text); }
+  .b-neutral { background: var(--neutral-bg); color: var(--neutral-text); }
+
+  .fields { display: grid; gap: 14px; }
+  .field-title { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .field-value { overflow-wrap: anywhere; }
+  .not-discussed { color: var(--muted); font-style: italic; }
+  .items { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; vertical-align: middle; }
+  .chip {
+    cursor: pointer; font-size: 13px; font-weight: 600; line-height: 1.2;
+    padding: 4px 9px; border-radius: 999px; border: 1px solid var(--chip-text);
+    background: var(--chip-bg); color: var(--chip-text);
+    transition: background-color .12s;
+  }
+  .chip:hover { background: var(--chip-hover-bg); }
+  .chip:disabled { cursor: not-allowed; border-style: dashed; }
+
+  .note { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 14px; }
+  .note ul { margin: 4px 0 0; padding-left: 18px; }
+  .error { background: var(--bad-bg); color: var(--bad-text); }
+
+  .roles { display: grid; gap: 14px; }
+  .role { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--surface); }
+  .role h3 { margin: 0; font-size: 17px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .decision { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+  .decision-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+  .decision-status { font-weight: 600; }
+  .questions { margin: 8px 0 0; padding: 10px 12px 10px 30px; background: var(--surface-2); border-radius: 8px; }
+  .reqs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+  .req { border-top: 1px solid var(--border); padding-top: 10px; }
+  .req-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  .req-text { font-weight: 600; overflow-wrap: anywhere; }
+  .req-reason { color: var(--muted); font-size: 14px; margin-top: 2px; }
+
+  .transcript { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .turn {
+    border: 2px solid transparent; border-radius: 8px; padding: 8px 10px; background: var(--surface-2);
+    scroll-margin-top: 80px; transition: background-color .3s, border-color .3s;
+  }
+  .turn.candidate { background: var(--surface); border-color: var(--border); }
+  .turn-head { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .turn-text { overflow-wrap: anywhere; }
+  .turn.highlight { background: var(--highlight-bg); border-color: var(--highlight-border); }
+  .turn.highlight .turn-head { color: var(--text); }
+
+  .empty { color: var(--muted); padding: 24px 8px; text-align: center; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+    .calls { position: static; max-height: 45vh; }
+  }
+  @media (max-width: 480px) {
+    .topbar { padding: 10px 12px; }
+    .topbar .btn { width: 100%; }
+    section.panel { padding: 12px; }
+    .decision { flex-direction: column; align-items: stretch; }
+    .decision .badge { align-self: flex-start; }
+    .decision-buttons .btn { flex: 1 1 0; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>Screening review</h1>
+  <a id="new-call" class="btn btn-primary" href="#" target="_blank" rel="noopener">Start a new call</a>
+</header>
+<div class="layout">
+  <nav class="calls panel" aria-label="Calls">
+    <h2>Calls</h2>
+    <ul id="call-list" class="call-list"></ul>
+  </nav>
+  <main id="detail"><div class="panel empty">Loading…</div></main>
+</div>
+<div id="live" class="sr-only" aria-live="polite"></div>
+
+<script>
+"use strict";
+// All data is inserted as text (textContent), never as HTML.
+// Profile field names and titles come from the schema served at /api/schema.
+
+const state = { config: null, schema: null, calls: [], current: null, highlighted: null };
+const SPEAKER_LABEL = { interviewer: "Interviewer", candidate: "Candidate" };
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "text") node.textContent = v;
+    else if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of [].concat(children)) if (c) node.append(c);
+  return node;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+function words(s) { return s ? String(s).replace(/_/g, " ") : ""; }
+function capital(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function callName(c) { return c.persona ? capital(c.persona) : "Voice call"; }
+
+function outcomeClass(outcome) {
+  const o = state.config.outcomes;
+  return outcome === o.advance ? "b-good" : outcome === o.follow_up ? "b-warn" : outcome === o.not_a_fit ? "b-bad" : "b-neutral";
+}
+function ratingClass(rating) {
+  const r = state.config.ratings;
+  return rating === r.met ? "b-good" : rating === r.partly_met ? "b-warn" : rating === r.not_met ? "b-bad" : "b-neutral";
+}
+function statusText(rec) {
+  const d = state.config.decisions;
+  if (rec.status === d.approved) return `Approved ${fmtTime(rec.decided_at)}`;
+  if (rec.status === d.rejected) return `Rejected ${fmtTime(rec.decided_at)}`;
+  return "Pending a decision";
+}
+function statusClass(status) {
+  const d = state.config.decisions;
+  return status === d.approved ? "b-good" : status === d.rejected ? "b-bad" : "b-neutral";
+}
+
+// ---------------------------------------------------------------- call list
+function renderList() {
+  const list = document.getElementById("call-list");
+  list.replaceChildren();
+  if (!state.calls.length) {
+    list.append(el("li", { class: "empty", text: "No calls yet. Run a call or simulate.py." }));
+    return;
+  }
+  for (const c of state.calls) {
+    const pending = c.outcomes.filter(o => o.status === state.config.decisions.pending).length;
+    const badges = el("div", { class: "call-badges" }, [
+      el("span", { class: "badge b-neutral", text: c.mode ? capital(c.mode) : "Call" }),
+      c.outcomes.length
+        ? el("span", { class: `badge ${pending ? "b-warn" : "b-good"}`, text: pending ? `${pending} pending` : "All decided" })
+        : el("span", { class: "badge b-neutral", text: "No matches" }),
+    ]);
+    const btn = el("button", {
+      class: "call-item", type: "button",
+      "aria-current": state.current && state.current.info.call_id === c.call_id ? "true" : "false",
+      onclick: () => selectCall(c.call_id),
+    }, [
+      el("div", { class: "call-name", text: callName(c) }),
+      el("div", { class: "call-meta", text: fmtTime(c.started_at) || c.call_id }),
+      badges,
+    ]);
+    list.append(el("li", {}, btn));
+  }
+}
+
+// ---------------------------------------------------------------- evidence
+function chips(evidence) {
+  if (!evidence || !evidence.length) return null;
+  const turns = new Set((state.current.transcript || []).map(t => t.turn));
+  return el("span", { class: "chips" }, evidence.map(n => turns.has(n)
+    ? el("button", { class: "chip", type: "button", "aria-label": `Show turn ${n} in the transcript`,
+                     onclick: () => showTurn(n), text: `Turn ${n}` })
+    : el("button", { class: "chip", type: "button", disabled: true, text: `Turn ${n} (missing)` })));
+}
+
+function showTurn(n) {
+  const node = document.getElementById(`turn-${n}`);
+  if (!node) return;
+  if (state.highlighted) state.highlighted.classList.remove("highlight");
+  node.classList.add("highlight");
+  state.highlighted = node;
+  // Instant, not smooth: a smooth scroll never moves in a throttled or background tab.
+  node.scrollIntoView({ block: "center" });
+  node.focus({ preventScroll: true });
+  document.getElementById("live").textContent = `Showing turn ${n}`;
+}
+
+// ---------------------------------------------------------------- profile
+function stringParts(obj) {
+  return Object.entries(obj).filter(([k, v]) => k !== "evidence" && typeof v === "string").map(([, v]) => v);
+}
+function valueNode(text) {
+  const nd = state.notDiscussed && text.trim().toLowerCase() === state.notDiscussed;
+  return el("span", { class: nd ? "field-value not-discussed" : "field-value", text });
+}
+
+function renderProfile(result) {
+  const section = el("section", { class: "panel", "aria-labelledby": "profile-h" });
+  const heading = el("h2", { id: "profile-h" }, ["Profile"]);
+  section.append(heading);
+  if (!result) {
+    section.append(el("p", { class: "empty", text: "No profile for this call yet." }));
+    return section;
+  }
+  heading.append(el("span", { class: `badge ${result.status === "valid" ? "b-good" : "b-bad"}`, text: result.status }));
+  if (result.status !== "valid") {
+    section.append(el("div", { class: "note error" }, [
+      "The profile could not be built:",
+      el("ul", {}, (result.validation_errors || []).map(e => el("li", { text: e }))),
+    ]));
+    return section;
+  }
+  const profile = result.profile;
+  const fields = el("div", { class: "fields" });
+  for (const [name, prop] of Object.entries(state.schema.properties)) {
+    const node = profile[name];
+    const field = el("div", { class: "field" }, el("div", { class: "field-title", text: prop.title || words(name) }));
+    if (Array.isArray(node)) {
+      if (!node.length) field.append(valueNode(state.notDiscussed || "none"));
+      else field.append(el("ul", { class: "items" }, node.map(item =>
+        el("li", {}, [valueNode(stringParts(item).join(" — ")), chips(item.evidence)]))));
+    } else if (node && typeof node === "object") {
+      field.append(el("div", {}, [valueNode(stringParts(node).join(" — ")), chips(node.evidence)]));
+    }
+    fields.append(field);
+  }
+  section.append(fields);
+  if (result.evidence_errors && result.evidence_errors.length) {
+    section.append(el("div", { class: "note" }, [
+      "Evidence problems found by the checker:",
+      el("ul", {}, result.evidence_errors.map(e =>
+        el("li", { text: `${e.field}: ${e.problem}${e.turn !== null ? ` (turn ${e.turn})` : ""}` }))),
+    ]));
+  }
+  return section;
+}
+
+// ---------------------------------------------------------------- matches
+function renderRole(callId, role) {
+  const rec = role.recommendation;
+  const d = state.config.decisions;
+  const card = el("article", { class: "role", "aria-label": role.title });
+  card.append(el("h3", {}, [role.title, el("span", { class: `badge ${outcomeClass(rec.outcome)}`, text: capital(rec.outcome) })]));
+
+  const decided = rec.status !== d.pending;
+  const buttons = decided
+    ? [el("button", { class: "btn btn-secondary", type: "button", text: "Undo decision",
+                      onclick: e => decide(callId, role.role_id, d.pending, e.currentTarget) })]
+    : [el("button", { class: "btn btn-primary", type: "button", text: "Approve",
+                      onclick: e => decide(callId, role.role_id, d.approved, e.currentTarget) }),
+       el("button", { class: "btn btn-danger", type: "button", text: "Reject",
+                      onclick: e => decide(callId, role.role_id, d.rejected, e.currentTarget) })];
+  card.append(el("div", { class: "decision" }, [
+    el("span", { class: `badge ${statusClass(rec.status)}`, text: statusText(rec) }),
+    el("div", { class: "decision-buttons" }, buttons)]));
+
+  if (rec.follow_up_questions && rec.follow_up_questions.length) {
+    card.append(el("div", { class: "field-title", text: "Questions to follow up" }));
+    card.append(el("ul", { class: "questions" }, rec.follow_up_questions.map(q => el("li", { text: q }))));
+  }
+  card.append(el("ul", { class: "reqs" }, role.requirements.map(q => el("li", { class: "req" }, [
+    el("div", { class: "req-head" }, [
+      el("span", { class: "badge b-neutral", text: q.must_have ? "Must-have" : "Nice-to-have" }),
+      el("span", { class: `badge ${ratingClass(q.rating)}`, text: capital(q.rating) }),
+      q.rating_used !== q.rating
+        ? el("span", { class: "badge b-warn", text: `Counted as ${q.rating_used}: no supporting turn` }) : null,
+      chips(q.evidence),
+    ]),
+    el("div", { class: "req-text", text: q.text }),
+    el("div", { class: "req-reason", text: q.reason }),
+  ]))));
+  return card;
+}
+
+function renderMatches(result) {
+  const section = el("section", { class: "panel", "aria-labelledby": "matches-h" });
+  const heading = el("h2", { id: "matches-h" }, ["Role matches"]);
+  section.append(heading);
+  if (!result) {
+    section.append(el("p", { class: "empty", text: "No role matches for this call yet." }));
+    return section;
+  }
+  if (result.status !== "valid") {
+    heading.append(el("span", { class: "badge b-bad", text: result.status }));
+    section.append(el("div", { class: "note error" }, [
+      "Matching could not be completed:",
+      el("ul", {}, (result.validation_errors || []).map(e => el("li", { text: e }))),
+    ]));
+    return section;
+  }
+  section.append(el("p", { class: "meta", text:
+    "Recommendations are computed from the ratings below. Nothing is sent to anyone; a decision is only saved to this call's file." }));
+  section.append(el("div", { class: "roles", id: "roles" }, result.roles.map(r => renderRole(state.current.info.call_id, r))));
+  return section;
+}
+
+async function decide(callId, roleId, decision, button) {
+  button.disabled = true;
+  try {
+    const rec = await api(`/api/calls/${encodeURIComponent(callId)}/decision`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role_id: roleId, decision }),
+    });
+    const role = state.current.matches.roles.find(r => r.role_id === roleId);
+    role.recommendation = rec;
+    const old = button.closest(".role");
+    old.replaceWith(renderRole(callId, role));
+    const summary = state.calls.find(c => c.call_id === callId);
+    const o = summary && summary.outcomes.find(x => x.role_id === roleId);
+    if (o) o.status = rec.status;
+    renderList();
+    document.getElementById("live").textContent = `${role.title}: ${statusText(rec)}`;
+  } catch (err) {
+    button.disabled = false;
+    showError(`Could not save the decision: ${err.message}`);
+  }
+}
+
+// ---------------------------------------------------------------- transcript
+function renderTranscript(turns) {
+  const section = el("section", { class: "panel", "aria-labelledby": "transcript-h" });
+  section.append(el("h2", { id: "transcript-h", text: "Transcript" }));
+  section.append(el("ol", { class: "transcript" }, turns.map(t =>
+    el("li", { class: `turn ${t.speaker}`, id: `turn-${t.turn}`, tabindex: "-1" }, [
+      el("div", { class: "turn-head", text: `Turn ${t.turn} · ${SPEAKER_LABEL[t.speaker] || capital(t.speaker)} · ${fmtTime(t.started_at)}` }),
+      el("div", { class: "turn-text", text: t.text }),
+    ]))));
+  return section;
+}
+
+// ---------------------------------------------------------------- page
+function showError(message) {
+  const detail = document.getElementById("detail");
+  const existing = detail.querySelector(".note.error.top");
+  if (existing) existing.remove();
+  detail.prepend(el("div", { class: "note error top", role: "alert", text: message }));
+}
+
+async function selectCall(callId) {
+  try {
+    state.current = await api(`/api/calls/${encodeURIComponent(callId)}`);
+  } catch (err) {
+    showError(`Could not load that call: ${err.message}`);
+    return;
+  }
+  state.highlighted = null;
+  history.replaceState(null, "", `#call=${encodeURIComponent(callId)}`);
+  const s = state.current.info;
+  const meta = [fmtTime(s.started_at), s.mode && capital(s.mode),
+                s.duration_secs != null && `${Math.round(s.duration_secs)} s`,
+                s.end_reason && `Ended: ${words(s.end_reason)}`].filter(Boolean);
+  const header = el("section", { class: "panel" }, [
+    el("h2", { class: "call-title", text: callName(s) }),
+    el("div", { class: "meta" }, meta.map(m => el("span", { text: m }))),
+    el("div", { class: "call-meta", text: s.call_id }),
+  ]);
+  document.getElementById("detail").replaceChildren(
+    header,
+    renderProfile(state.current.profile),
+    renderMatches(state.current.matches),
+    renderTranscript(state.current.transcript || []),
+  );
+  renderList();
+}
+
+async function init() {
+  try {
+    [state.config, state.schema, state.calls] = await Promise.all([api("/api/config"), api("/api/schema"), api("/api/calls")]);
+  } catch (err) {
+    document.getElementById("detail").replaceChildren(el("div", { class: "panel note error", role: "alert",
+      text: `Could not reach the review server: ${err.message}` }));
+    return;
+  }
+  state.notDiscussed = state.config.not_discussed ? state.config.not_discussed.toLowerCase() : null;
+  document.getElementById("new-call").href = state.config.voice_page_url;
+  renderList();
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get("call");
+  const first = state.calls.find(c => c.call_id === fromHash) || state.calls[0];
+  if (first) await selectCall(first.call_id);
+  else document.getElementById("detail").replaceChildren(el("div", { class: "panel empty", text: "No calls yet." }));
+}
+init();
+</script>
+</body>
+</html>
