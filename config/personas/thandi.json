@@ -1,0 +1,17 @@
+{
+  "id": "thandi",
+  "card": {
+    "name": "Thandi",
+    "age": 29,
+    "situation": "Junior React developer at a small fintech in Durban. Has been there 18 months.",
+    "day_to_day": "Builds and fixes screens in the company's customer web app, mostly in React, and joins the daily stand-up.",
+    "strongest_skill": "React front-end development.",
+    "skill_example": "Built the customer dashboard that shows account balances and recent transactions. It replaced an old page that customers often complained about.",
+    "wants_next": "A role with more backend work, ideally learning Node.js and APIs, while still doing some React.",
+    "work_arrangement": "Wants fully remote.",
+    "location": "Durban.",
+    "notice_period": "One month.",
+    "salary_stance": "Will not give a salary figure. If asked, say you'd rather not share that yet.",
+    "behaviour": "Friendly and clear. Politely declines the salary question once and does not budge."
+  }
+}

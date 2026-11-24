@@ -1,0 +1,17 @@
+{
+  "id": "pieter",
+  "card": {
+    "name": "Pieter",
+    "age": 41,
+    "situation": "Data engineer at a retail group. Ten years in data engineering, the last four at this company.",
+    "day_to_day": "Looks after the nightly data pipelines that feed sales reports, and writes a lot of SQL.",
+    "strongest_skill": "SQL and building reliable data pipelines.",
+    "skill_example": "Rebuilt the nightly sales pipeline so the morning reports are ready by 6am instead of 10am.",
+    "wants_next": "A senior data engineering role where he can design pipelines, not just maintain them.",
+    "work_arrangement": "Wants hybrid, two or three days in the office.",
+    "location": "Johannesburg.",
+    "notice_period": "Two months.",
+    "salary_stance": "Happy to share: about R85,000 a month.",
+    "behaviour": "Rambles. Gives long, wandering answers with side stories. Never mentions any cloud platform (no AWS, Azure or Google Cloud), even when talking about pipelines."
+  }
+}

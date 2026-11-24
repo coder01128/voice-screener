@@ -1,7 +1,8 @@
 """Loads config/voice.json and checks required environment variables.
 
-Model names and prompt text live in config/voice.json; keys and the voice ID
-live in .env. Nothing here ever logs a value from the environment.
+Model names live in config/voice.json, interview prompt text in
+config/interview.json (see screener.interview), keys and the voice ID in .env.
+Nothing here ever logs a value from the environment.
 """
 
 import json
@@ -29,35 +30,50 @@ class VoiceConfig:
     stt_model: str
     llm_model: str
     tts_model: str
-    system_prompt: str
-    greeting_prompt: str
+    # If Gemini hasn't sent its first token within the timeout, re-send the
+    # request once (Pipecat's retry_on_timeout). Free-tier Gemini occasionally
+    # stalls for 14-16s before starting a reply (seen in Ticket 02 testing).
+    llm_retry_if_slow_to_start: bool
+    llm_first_reply_timeout_secs: float
 
 
-def _require_str(data: dict, dotted: str) -> str:
-    node = data
-    for part in dotted.split("."):
-        if not isinstance(node, dict) or part not in node:
-            raise ConfigError(f"{VOICE_CONFIG_PATH.name}: missing '{dotted}'")
-        node = node[part]
-    if not isinstance(node, str) or not node.strip():
-        raise ConfigError(f"{VOICE_CONFIG_PATH.name}: '{dotted}' must be a non-empty string")
-    return node.strip()
-
-
-def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
+def read_json(path: Path) -> dict:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as e:
         raise ConfigError(f"Config file not found: {path}") from e
     except json.JSONDecodeError as e:
         raise ConfigError(f"{path.name} is not valid JSON: {e}") from e
 
+
+def require_str(data: dict, dotted: str, source: str) -> str:
+    node = data
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise ConfigError(f"{source}: missing '{dotted}'")
+        node = node[part]
+    if not isinstance(node, str) or not node.strip():
+        raise ConfigError(f"{source}: '{dotted}' must be a non-empty string")
+    return node.strip()
+
+
+def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
+    data = read_json(path)
+    llm = data.get("llm", {})
+
+    retry = llm.get("retry_if_slow_to_start")
+    if not isinstance(retry, bool):
+        raise ConfigError(f"{path.name}: 'llm.retry_if_slow_to_start' must be true or false")
+    timeout = llm.get("first_reply_timeout_secs")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ConfigError(f"{path.name}: 'llm.first_reply_timeout_secs' must be a positive number")
+
     return VoiceConfig(
-        stt_model=_require_str(data, "stt.model"),
-        llm_model=_require_str(data, "llm.model"),
-        tts_model=_require_str(data, "tts.model"),
-        system_prompt=_require_str(data, "prompts.system"),
-        greeting_prompt=_require_str(data, "prompts.greeting"),
+        stt_model=require_str(data, "stt.model", path.name),
+        llm_model=require_str(data, "llm.model", path.name),
+        tts_model=require_str(data, "tts.model", path.name),
+        llm_retry_if_slow_to_start=retry,
+        llm_first_reply_timeout_secs=float(timeout),
     )
 
 
