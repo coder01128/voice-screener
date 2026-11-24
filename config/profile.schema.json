@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Candidate profile",
+  "description": "Facts from a screening call. Every value carries evidence: the transcript turn numbers where the candidate said it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "current_role",
+    "skills",
+    "wants_next",
+    "work_arrangement",
+    "location",
+    "notice_period",
+    "salary_expectation",
+    "open_questions"
+  ],
+  "properties": {
+    "summary": {
+      "title": "Summary",
+      "description": "Two or three neutral sentences summarising what the candidate said. No opinions or judgements about the candidate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "current_role": {
+      "title": "Current role",
+      "description": "Their current job, the kind of company, how long they have been there and what they do day to day.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "skills": {
+      "title": "Skills",
+      "description": "Skills the candidate named, each with the concrete example they gave. Use the not-discussed marker as the example if they gave none. An empty list if they named no skills.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "example", "evidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "example": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    },
+    "wants_next": {
+      "title": "Wants next",
+      "description": "The kind of work and direction they want in their next role.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "work_arrangement": {
+      "title": "Work arrangement",
+      "description": "Remote, hybrid or office, as they stated it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "location": {
+      "title": "Location",
+      "description": "Where they are based.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "notice_period": {
+      "title": "Notice period",
+      "description": "Their notice period and earliest start. If they changed their answer, the final answer, citing both turns.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "salary_expectation": {
+      "title": "Salary expectation",
+      "description": "The figure they gave, in their words. If they declined to share, say they declined (this is not the not-discussed marker). Never estimate a figure.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence"],
+      "properties": {
+        "value": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "open_questions": {
+      "title": "Open questions",
+      "description": "Questions a recruiter should follow up because an answer was missing, vague or changed during the call. Each cites the turns that raise it. An empty list if there are none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "evidence"],
+        "properties": {
+          "question": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "integer" } }
+        }
+      }
+    }
+  }
+}

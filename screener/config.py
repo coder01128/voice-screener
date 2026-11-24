@@ -35,11 +35,17 @@ class VoiceConfig:
     # stalls for 14-16s before starting a reply (seen in Ticket 02 testing).
     llm_retry_if_slow_to_start: bool
     llm_first_reply_timeout_secs: float
+    # Every Gemini request this process sends to a model waits for a slot
+    # under this cap. Free tier for our Flash-Lite model: 15 per minute per
+    # project per model (from Google's 429 response, Nov 2026).
+    llm_max_requests_per_minute: int
 
 
 def read_json(path: Path) -> dict:
+    # utf-8-sig also accepts a leading byte-order mark, which Notepad and
+    # Windows PowerShell can add when saving a file as UTF-8.
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError as e:
         raise ConfigError(f"Config file not found: {path}") from e
     except json.JSONDecodeError as e:
@@ -67,6 +73,9 @@ def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
     timeout = llm.get("first_reply_timeout_secs")
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
         raise ConfigError(f"{path.name}: 'llm.first_reply_timeout_secs' must be a positive number")
+    rpm = llm.get("max_requests_per_minute")
+    if isinstance(rpm, bool) or not isinstance(rpm, int) or rpm <= 0:
+        raise ConfigError(f"{path.name}: 'llm.max_requests_per_minute' must be a positive whole number")
 
     return VoiceConfig(
         stt_model=require_str(data, "stt.model", path.name),
@@ -74,6 +83,7 @@ def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
         tts_model=require_str(data, "tts.model", path.name),
         llm_retry_if_slow_to_start=retry,
         llm_first_reply_timeout_secs=float(timeout),
+        llm_max_requests_per_minute=rpm,
     )
 
 

@@ -23,9 +23,11 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 
 from screener.call_end import end_interview_schema
 from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, require_env
+from screener.ground_truth import check_against_ground_truth, load_ground_truth
 from screener.interview import load_interview_config
 from screener.llm import Reply, RequestCounter, interviewer_llm, persona_llm, reply
 from screener.personas import build_persona_prompt, list_personas, load_card, load_simulation_config
+from screener.profile import describe_profile, load_schema, profile_call
 from screener.simulation import run_simulated_call
 from screener.transcript import INTERVIEWER, now_iso
 
@@ -38,15 +40,19 @@ def setup_logging():
     logger.add(SIM_LOG_PATH, level="DEBUG", rotation="5 MB", retention=5, encoding="utf-8")
 
 
-async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool]:
-    """Runs one simulated call. Returns (Gemini requests used, succeeded)."""
+async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool, bool]:
+    """Runs one simulated call, its profile and checks.
+
+    Returns (Gemini requests used, ran to the end, every check passed).
+    """
     voice = load_voice_config()
     interview = load_interview_config()
     sim = load_simulation_config()
     card = load_card(persona_id)  # the card section only; never ground_truth
 
     interviewer = interviewer_llm(voice, interview, api_key)
-    persona = persona_llm(sim.persona_model, build_persona_prompt(card, sim), api_key)
+    persona = persona_llm(sim.persona_model, build_persona_prompt(card, sim), api_key,
+                          voice.llm_max_requests_per_minute)
     interviewer_requests = RequestCounter(interviewer)
     persona_requests = RequestCounter(persona)
     end_tool = end_interview_schema(interview.prompt.end_tool_name, interview.prompt.end_tool_description)
@@ -73,7 +79,7 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool]:
         print(f"\nFAILED: {type(e).__name__}: {e}")
         print(f"Gemini requests used: {requests_used()} "
               f"(interviewer {interviewer_requests.count}, persona {persona_requests.count})")
-        return requests_used(), False
+        return requests_used(), False, False
 
     out_dir = result.transcript.save(
         call_id,
@@ -95,9 +101,25 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool]:
     )
     print(f"\n--- {card['name']}: {len(result.transcript.turns)} turns, ended: {result.end_reason}")
     print(f"Saved: {out_dir}")
-    print(f"Gemini requests used: {requests_used()} "
-          f"(interviewer {interviewer_requests.count}, persona {persona_requests.count})")
-    return requests_used(), True
+
+    schema = load_schema()
+    profile_result, profile_requests = await profile_call(out_dir, api_key, schema=schema)
+    print()
+    print("\n".join(describe_profile(profile_result, schema)))
+
+    checks_ok = profile_result["status"] == "valid"
+    if checks_ok:
+        checks = check_against_ground_truth(profile_result["profile"], load_ground_truth(persona_id, schema))
+        print(f"\nGround-truth check ({card['name']}):")
+        for c in checks:
+            print(f"  {'PASS' if c.passed else 'FAIL'}  {c.field}: {c.reason}")
+        checks_ok = all(c.passed for c in checks) and not profile_result["evidence_errors"]
+        print(f"  => {'all fields pass' if checks_ok else 'some checks failed'}")
+
+    total = requests_used() + profile_requests
+    print(f"\nGemini requests used: {total} "
+          f"(interviewer {interviewer_requests.count}, persona {persona_requests.count}, profile {profile_requests})")
+    return total, True, checks_ok
 
 
 async def main() -> int:
@@ -119,15 +141,20 @@ async def main() -> int:
         return 1
 
     total = 0
+    outcomes: dict[str, str] = {}
     for pid in persona_ids:
-        used, ok = await simulate_one(pid, api_key)
+        used, ran, checks_ok = await simulate_one(pid, api_key)
         total += used
-        if not ok:
+        outcomes[pid] = "all checks pass" if checks_ok else ("checks failed" if ran else "run failed")
+        if not ran:
             print("Stopping here so a failing run doesn't keep spending requests.")
             break
     if len(persona_ids) > 1:
-        print(f"\n=== Total Gemini requests this run: {total} ===")
-    return 0 if ok else 1
+        print("\n=== Summary ===")
+        for pid, outcome in outcomes.items():
+            print(f"  {pid}: {outcome}")
+        print(f"=== Total Gemini requests this run: {total} ===")
+    return 0 if outcomes and all(o == "all checks pass" for o in outcomes.values()) else 1
 
 
 if __name__ == "__main__":

@@ -1,0 +1,21 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "thinking_level": "minimal",
+  "not_discussed_value": "not discussed",
+  "system_template": [
+    "You turn a screening-call transcript into a candidate profile. Reply with JSON that matches the schema you are given.",
+    "",
+    "Rules:",
+    "- Use only what the candidate actually said. Never infer, guess, estimate or fill gaps from general knowledge.",
+    "- If the candidate did not cover a field, set its value to \"{not_discussed}\" and its evidence to an empty list. For a list field, use an empty list.",
+    "- If the candidate was asked and declined to answer, record that they declined. Declining is not the same as not discussed.",
+    "- Evidence is the list of turn numbers (the N in [turn N]) where the candidate said it. Cite the candidate's own turns, not the interviewer's.",
+    "- Every value that is not \"{not_discussed}\" must cite at least one turn.",
+    "",
+    "Fields:",
+    "{fields}"
+  ],
+  "field_line_template": "- {name} ({title}): {description}",
+  "transcript_intro": "Transcript of the call:",
+  "turn_line_template": "[turn {turn}] {speaker}: {text}"
+}

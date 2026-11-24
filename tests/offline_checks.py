@@ -340,8 +340,12 @@ def check_voice_config():
         "retry flag not true/false": lambda d: d["llm"].__setitem__("retry_if_slow_to_start", "yes"),
         "zero timeout": lambda d: d["llm"].__setitem__("first_reply_timeout_secs", 0),
         "missing timeout": lambda d: d["llm"].pop("first_reply_timeout_secs"),
+        "zero requests per minute": lambda d: d["llm"].__setitem__("max_requests_per_minute", 0),
     }
     with tempfile.TemporaryDirectory() as tmp:
+        bom = Path(tmp) / "bom.json"
+        bom.write_bytes(b"\xef\xbb\xbf" + VOICE_CONFIG_PATH.read_bytes())
+        check("config saved with a UTF-8 BOM (Notepad) still loads", load_voice_config(bom).llm_model == vc.llm_model)
         path = Path(tmp) / "voice.json"
         for name, mutate in bad_cases.items():
             d = json.loads(json.dumps(base))
@@ -585,6 +589,242 @@ async def check_reply_parsing_and_counting():
     check("a slow-start retry counts as two requests", counter.count == 2 and r.text == "Hello.")
 
 
+# ---------------------------------------------------------------- profile (Ticket 03)
+def sample_profile(schema: dict, turn: int = 2, marker: str | None = None) -> dict:
+    """A schema-valid profile generated from the schema itself (no field names typed here)."""
+    out = {}
+    for name, prop in schema["properties"].items():
+        if prop["type"] == "object":
+            out[name] = {"value": marker or f"{name} text", "evidence": [] if marker else [turn]}
+        else:
+            item = {k: f"{name} {k}" for k, sub in prop["items"]["properties"].items() if sub.get("type") == "string"}
+            out[name] = [] if marker else [{**item, "evidence": [turn]}]
+    return out
+
+
+def write_call(tmp: Path, turns: int = 6) -> Path:
+    call_dir = tmp / "call"
+    call_dir.mkdir()
+    rows = [{"turn": i, "speaker": INTERVIEWER if i % 2 else CANDIDATE, "text": f"line {i}",
+             "started_at": now_iso()} for i in range(1, turns + 1)]
+    (call_dir / "transcript.json").write_text(json.dumps(rows), encoding="utf-8")
+    return call_dir
+
+
+def fake_generate(replies: list):
+    """Plays back raw replies; an Exception instance is raised instead of returned."""
+    queue = list(replies)
+
+    async def generate(system, user, schema):
+        generate.calls.append((system, user, schema))
+        r = queue.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    generate.calls = []
+    return generate
+
+
+def check_profile_schema_and_prompt():
+    section("Profile schema is the single source of field names")
+    from screener.profile import (
+        build_extraction_prompt,
+        format_transcript,
+        load_extraction_config,
+        load_schema,
+        schema_for_gemini,
+    )
+
+    schema, ext = load_schema(), load_extraction_config()
+    names = list(schema["properties"])
+    check("profile.schema.json is a valid JSON Schema", True, f"{len(names)} fields")
+    check("every field is required", sorted(schema["required"]) == sorted(names))
+    prompt = build_extraction_prompt(schema, ext)
+    check("extraction prompt lists every schema field with its description",
+          all(n in prompt and schema["properties"][n]["description"] in prompt for n in names))
+    check("extraction prompt names the not-discussed marker", f'"{ext.not_discussed}"' in prompt)
+    check("extraction prompt has no unfilled placeholders", "{" not in prompt and "}" not in prompt)
+    sent = schema_for_gemini(schema)
+    check("schema sent to Gemini is the same schema minus $schema",
+          "$schema" not in sent and sent["properties"] == schema["properties"] and "$schema" in schema)
+    text = format_transcript([{"turn": 3, "speaker": CANDIDATE, "text": "Hi.", "started_at": "x"}], ext)
+    check("transcript lines carry turn numbers", "[turn 3] candidate: Hi." in text)
+
+    code_files = ["bot.py", "simulate.py", "build_profile.py", "screener/profile.py",
+                  "screener/ground_truth.py", "screener/llm.py", "screener/simulation.py"]
+    hard_coded = [f"{f}: {n}" for f in code_files for n in names
+                  if f'"{n}"' in (ROOT / f).read_text(encoding="utf-8") or f"'{n}'" in (ROOT / f).read_text(encoding="utf-8")]
+    check("no code file hard-codes a profile field name", hard_coded == [], ", ".join(hard_coded))
+    profile_src = (ROOT / "screener/profile.py").read_text(encoding="utf-8")
+    check("profile step never reads call.json or mode (voice = simulated)",
+          '"call.json"' not in profile_src and '"mode"' not in profile_src)
+
+
+async def check_profile_paths():
+    section("Profile step: valid, retry, invalid paths (fake Gemini, no requests)")
+    from screener.profile import build_profile, load_extraction_config, load_schema
+
+    schema, ext = load_schema(), load_extraction_config()
+    good = json.dumps(sample_profile(schema))
+    missing_field = sample_profile(schema)
+    missing_field.pop(next(iter(schema["properties"])))
+    bad = json.dumps(missing_field)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        call_dir = write_call(Path(tmp))
+        gen = fake_generate([good])
+        r = await build_profile(call_dir, gen)
+        saved = json.loads((call_dir / "profile.json").read_text(encoding="utf-8"))
+        check("valid reply: status valid after 1 attempt, saved to profile.json",
+              r["status"] == "valid" and r["attempts"] == 1 and saved["profile"] == json.loads(good))
+        check("Gemini is sent the schema as its response schema", gen.calls[0][2]["properties"] == schema["properties"])
+        check("clean profile: no evidence errors", r["evidence_errors"] == [])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_profile(write_call(Path(tmp)), fake_generate(["{not json", good]))
+        check("bad first reply: retried once, then valid", r["status"] == "valid" and r["attempts"] == 2)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        call_dir = write_call(Path(tmp))
+        r = await build_profile(call_dir, fake_generate([bad, bad]))
+        saved = json.loads((call_dir / "profile.json").read_text(encoding="utf-8"))
+        check("invalid twice: saved with status invalid and the raw reply, no profile",
+              saved["status"] == "invalid" and saved["raw_output"] == bad and saved["profile"] is None
+              and saved["attempts"] == 2 and saved["validation_errors"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        r = await build_profile(write_call(Path(tmp)), fake_generate([RuntimeError("boom"), RuntimeError("boom")]))
+        check("request failing twice: invalid, no crash", r["status"] == "invalid" and "boom" in r["validation_errors"][0])
+
+    broken = json.loads(json.dumps(schema))
+    first = broken["required"][0]
+    broken["required"][0] = first + "_renamed"
+    with tempfile.TemporaryDirectory() as tmp:
+        call_dir = write_call(Path(tmp))
+        r = await build_profile(call_dir, fake_generate([good, good]), schema=broken)
+        check("broken schema (required field renamed): invalid path, raw saved, no crash",
+              r["status"] == "invalid" and r["raw_output"] == good and (call_dir / "profile.json").exists())
+
+
+def check_evidence_rules():
+    section("Evidence rules (checked in code)")
+    from screener.profile import check_evidence, load_extraction_config, load_schema
+
+    schema, ext = load_schema(), load_extraction_config()
+    turns = [{"turn": i, "speaker": INTERVIEWER if i % 2 else CANDIDATE} for i in range(1, 7)]
+    obj_field = next(n for n, p in schema["properties"].items() if p["type"] == "object")
+    arr_field = next(n for n, p in schema["properties"].items() if p["type"] == "array")
+
+    def problems_for(mutate):
+        p = sample_profile(schema)
+        mutate(p)
+        return check_evidence(p, schema, turns, ext.not_discussed)
+
+    check("all-not-discussed profile: no errors",
+          check_evidence(sample_profile(schema, marker=ext.not_discussed), schema, turns, ext.not_discussed) == [])
+    probs = problems_for(lambda p: p[obj_field].__setitem__("evidence", [99]))
+    check("cited turn that doesn't exist is flagged",
+          any(e["turn"] == 99 and "does not exist" in e["problem"] for e in probs))
+    probs = problems_for(lambda p: p[obj_field].__setitem__("evidence", []))
+    check("fact with no cited turn is flagged", any("cites no turn" in e["problem"] for e in probs))
+    probs = problems_for(lambda p: p[obj_field].update(value=ext.not_discussed, evidence=[2]))
+    check("not-discussed value that cites turns is flagged", any("marked not discussed" in e["problem"] for e in probs))
+    probs = problems_for(lambda p: p[obj_field].__setitem__("evidence", [1, 3]))
+    check("evidence citing only interviewer turns is flagged", any("interviewer" in e["problem"] for e in probs))
+    probs = problems_for(lambda p: p[arr_field][0].__setitem__("evidence", [42]))
+    check("list items are checked too", any(e["field"] == f"{arr_field}[0]" and e["turn"] == 42 for e in probs))
+
+
+def check_ground_truth():
+    section("Ground truth (read only by the checker)")
+    import screener.personas as personas
+    from screener.ground_truth import check_against_ground_truth, load_ground_truth
+    from screener.personas import list_personas, load_card
+    from screener.profile import load_schema
+
+    schema = load_schema()
+    for pid in list_personas():
+        truth = load_ground_truth(pid, schema)
+        check(f"{pid}: ground_truth uses schema field names; card loader hides it",
+              set(truth) <= set(schema["properties"]) and "ground_truth" not in load_card(pid), f"{len(truth)} fields")
+    check("expected.json lists exactly the three personas",
+          set(k for k in json.loads((personas.PERSONAS_DIR / "expected.json").read_text(encoding="utf-8")) if not k.startswith("_"))
+          == set(list_personas()))
+
+    names = list(schema["properties"])
+    obj_field = next(n for n in names if schema["properties"][n]["type"] == "object")
+    truth = {obj_field: {"fact": "declined, no number", "all_of": ["declin"], "none_of": ["\\d"]}}
+    good = {obj_field: {"value": "Declined to share", "evidence": [2]}}
+    bad = {obj_field: {"value": "R50,000 a month", "evidence": [2]}}
+    check("checker passes a matching field", check_against_ground_truth(good, truth)[0].passed)
+    result = check_against_ground_truth(bad, truth)[0]
+    check("checker fails a wrong field and says why",
+          not result.passed and "missing" in result.reason and "should not contain" in result.reason)
+    evidence_only = {obj_field: {"value": "declined", "evidence": [12345]}}
+    check("evidence numbers are not treated as field text",
+          check_against_ground_truth(evidence_only, truth)[0].passed)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "x.json").write_text(json.dumps({"card": {"name": "X"},
+                                                       "ground_truth": {"not_a_field": {"fact": "f"}}}), encoding="utf-8")
+        original = personas.PERSONAS_DIR
+        import screener.ground_truth as gt
+        gt.PERSONAS_DIR = Path(tmp)
+        try:
+            load_ground_truth("x", schema)
+            check("ground_truth with a field not in the schema is rejected", False)
+        except ConfigError:
+            check("ground_truth with a field not in the schema is rejected", True)
+        finally:
+            gt.PERSONAS_DIR = original
+
+
+async def check_rate_limiter():
+    section("Gemini pacing (free tier: requests per minute)")
+    import time
+
+    from screener.config import load_voice_config
+    from screener.llm import RateLimiter, interviewer_llm, limiter_for, persona_llm
+
+    limiter = RateLimiter(per_window=2, window_secs=0.4)
+    start = time.monotonic()
+    for _ in range(3):
+        await limiter.acquire()
+    elapsed = time.monotonic() - start
+    check("third request in the window waits for a slot instead of failing", 0.35 <= elapsed < 1.5, f"{elapsed:.2f}s")
+
+    voice = load_voice_config()
+    check("cap is below Google's free-tier 15 per minute", 0 < voice.llm_max_requests_per_minute < 15,
+          f"{voice.llm_max_requests_per_minute}/min")
+    check("one shared pacer per model",
+          limiter_for("model-a", 5) is limiter_for("model-a", 5) and limiter_for("model-a", 5) is not limiter_for("model-b", 5))
+
+    from pipecat.services.google.llm import GoogleLLMService
+    from screener.llm import _paced, reply
+
+    service = GoogleLLMService(api_key="offline-dummy")
+
+    async def fake_network(_ctx):
+        async def gen():
+            if False:
+                yield None
+        return gen()
+
+    service._stream_content = fake_network
+    _paced(service, RateLimiter(per_window=2, window_secs=0.4))
+    start = time.monotonic()
+    for _ in range(3):
+        await reply(service, LLMContext())
+    elapsed = time.monotonic() - start
+    check("a paced service's third request waits for a slot", 0.35 <= elapsed < 1.5, f"{elapsed:.2f}s")
+
+    llm = interviewer_llm(voice, load_interview_config(), "offline-dummy")
+    persona = persona_llm(voice.llm_model, "x", "offline-dummy", voice.llm_max_requests_per_minute)
+    check("interviewer and persona services are both paced",
+          llm._stream_content.__name__ == "paced" and persona._stream_content.__name__ == "paced")
+
+
 async def main():
     check_voice_config()
     await check_gemini_retry()
@@ -600,6 +840,11 @@ async def main():
     await check_simulated_request(cfg)
     await check_simulation_loop(cfg)
     await check_reply_parsing_and_counting()
+    await check_rate_limiter()
+    check_profile_schema_and_prompt()
+    await check_profile_paths()
+    check_evidence_rules()
+    check_ground_truth()
     print(f"\n{sum(results)}/{len(results)} passed")
     return all(results)
 

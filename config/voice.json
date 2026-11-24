@@ -10,7 +10,8 @@
   "llm": {
     "model": "gemini-3.5-flash-lite",
     "retry_if_slow_to_start": true,
-    "first_reply_timeout_secs": 3.0
+    "first_reply_timeout_secs": 3.0,
+    "max_requests_per_minute": 14
   },
   "tts": {
     "model": "eleven_flash_v2_5"

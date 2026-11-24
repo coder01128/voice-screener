@@ -13,5 +13,41 @@
     "notice_period": "Two months.",
     "salary_stance": "Happy to share: about R85,000 a month.",
     "behaviour": "Rambles. Gives long, wandering answers with side stories. Never mentions any cloud platform (no AWS, Azure or Google Cloud), even when talking about pipelines."
+  },
+  "ground_truth": {
+    "summary": {
+      "fact": "Data engineer; no cloud platform invented",
+      "all_of": ["data"],
+      "none_of": ["\\baws\\b|azure|\\bgcp\\b|google cloud"]
+    },
+    "current_role": {
+      "fact": "Data engineer at a retail group",
+      "all_of": ["data engineer"]
+    },
+    "skills": {
+      "fact": "SQL and data pipelines, with the nightly sales pipeline as the example; no cloud platform",
+      "all_of": ["sql", "pipeline"],
+      "none_of": ["\\baws\\b|azure|\\bgcp\\b|google cloud|cloud"]
+    },
+    "wants_next": {
+      "fact": "Senior data engineering role, designing pipelines",
+      "all_of": ["senior|design|architect"]
+    },
+    "work_arrangement": {
+      "fact": "Hybrid",
+      "all_of": ["hybrid"]
+    },
+    "location": {
+      "fact": "Johannesburg",
+      "all_of": ["johannesburg|joburg|jhb"]
+    },
+    "notice_period": {
+      "fact": "Two months",
+      "all_of": ["two months|2 months"]
+    },
+    "salary_expectation": {
+      "fact": "About R85,000 a month",
+      "all_of": ["85|eighty[- ]five"]
+    }
   }
 }

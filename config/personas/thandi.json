@@ -13,5 +13,41 @@
     "notice_period": "One month.",
     "salary_stance": "Will not give a salary figure. If asked, say you'd rather not share that yet.",
     "behaviour": "Friendly and clear. Politely declines the salary question once and does not budge."
+  },
+  "ground_truth": {
+    "summary": {
+      "fact": "Mentions she is a React developer",
+      "all_of": ["react"]
+    },
+    "current_role": {
+      "fact": "Junior React developer at a small fintech in Durban",
+      "all_of": ["react", "fintech|financial"]
+    },
+    "skills": {
+      "fact": "React front-end, with the customer dashboard as the example",
+      "all_of": ["react", "dashboard"]
+    },
+    "wants_next": {
+      "fact": "More backend work (Node.js, APIs)",
+      "all_of": ["back-?end|node|api"]
+    },
+    "work_arrangement": {
+      "fact": "Fully remote",
+      "all_of": ["remote"]
+    },
+    "location": {
+      "fact": "Durban",
+      "all_of": ["durban"]
+    },
+    "notice_period": {
+      "fact": "One month",
+      "all_of": ["one month|1 month|a month"],
+      "none_of": ["two|2 month|three|3 month"]
+    },
+    "salary_expectation": {
+      "fact": "Declined to share; never a number",
+      "all_of": ["not discussed|declin|rather not|not (to )?shar|did not|didn't|withheld|prefer"],
+      "none_of": ["\\d"]
+    }
   }
 }

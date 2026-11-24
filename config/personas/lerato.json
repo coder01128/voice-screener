@@ -13,5 +13,39 @@
     "notice_period": "First says one month. Later in the call, corrects it: it is actually two months.",
     "salary_stance": "Happy to share: about R32,000 a month.",
     "behaviour": "Changes her answer on notice period mid-call: says one month, then later says she checked and it is two months."
+  },
+  "ground_truth": {
+    "summary": {
+      "fact": "Operations coordinator wanting to move into tech",
+      "all_of": ["operations|logistics", "tech"]
+    },
+    "current_role": {
+      "fact": "Operations coordinator at a logistics company",
+      "all_of": ["operations|coordinat", "logistic|deliver"]
+    },
+    "skills": {
+      "fact": "Organising operations and problem-solving, with the fuel-strike re-plan as the example",
+      "all_of": ["organi|operation|problem|plan|coordinat", "fuel|strike|hospital"]
+    },
+    "wants_next": {
+      "fact": "Move into tech",
+      "all_of": ["tech"]
+    },
+    "work_arrangement": {
+      "fact": "Prefers hybrid, open to office",
+      "all_of": ["hybrid"]
+    },
+    "location": {
+      "fact": "Pretoria",
+      "all_of": ["pretoria"]
+    },
+    "notice_period": {
+      "fact": "Two months (her final answer after first saying one month)",
+      "all_of": ["two months|2 months"]
+    },
+    "salary_expectation": {
+      "fact": "About R32,000 a month",
+      "all_of": ["32|thirty[- ]two"]
+    }
   }
 }

@@ -8,7 +8,8 @@ The interview script comes from config/interview.json via screener.interview,
 the same code simulate.py uses. The bot ends the call itself, in code
 (screener.call_end), either when the LLM calls the end-interview tool after the
 last topic or when the call-length limit is reached. The transcript is saved to
-profiles/<call id>/ when the call ends, however it ends.
+profiles/<call id>/ when the call ends, however it ends, and the candidate
+profile is built from it (screener.profile, same code as simulate.py).
 
 Run with:  uv run bot.py -t webrtc   then open http://localhost:7860/client
 """
@@ -43,6 +44,7 @@ from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, requir
 from screener.interview import build_opening_line, load_interview_config
 from screener.latency import LatencyLog
 from screener.llm import interviewer_llm
+from screener.profile import profile_call
 from screener.transcript import CANDIDATE, INTERVIEWER, TranscriptRecorder, now_iso
 from screener.turns import candidate_turn_strategies
 
@@ -130,7 +132,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     transcript = TranscriptRecorder()
     time_limit = CallTimeLimit(ender, interview.max_call_seconds, interview.prompt.time_limit_goodbye)
-    call = {"started_at": None, "started_monotonic": None}
+    call = {"started_at": None, "started_monotonic": None, "out_dir": None}
 
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(_aggregator, _strategy, message: UserTurnStoppedMessage):
@@ -180,11 +182,22 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "max_call_seconds": interview.max_call_seconds,
             },
         )
+        call["out_dir"] = out_dir
         logger.info(f"Session {call_id}: transcript saved to {out_dir} ({len(transcript.turns)} turns)")
 
     await runner.add_workers(worker)
     await runner.run()
     logger.info(f"Session {call_id}: ended cleanly")
+
+    if call.get("out_dir") and transcript.turns:
+        try:
+            result, requests = await profile_call(call["out_dir"], env["GOOGLE_API_KEY"])
+            logger.info(
+                f"Session {call_id}: profile {result['status']} after {result['attempts']} attempt(s), "
+                f"{len(result['evidence_errors'])} evidence error(s), {requests} Gemini request(s)"
+            )
+        except Exception as e:
+            logger.error(f"Session {call_id}: profile step failed: {type(e).__name__}: {e}")
 
 
 async def bot(runner_args: RunnerArguments):
