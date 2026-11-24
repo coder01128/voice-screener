@@ -1,0 +1,22 @@
+{
+  "_sources": {
+    "deepgram": "deepgram.com/pricing: $200 sign-up credit, no card. Nova-3 streaming is listed between $0.0048 and $0.0077 per minute depending on the source, so the higher figure is used here (checked 24 Nov 2026). Your Deepgram console shows the real balance.",
+    "elevenlabs": "elevenlabs.io/pricing/api: Free plan 10,000 credits a month. Flash v2.5 is listed at 0.5 to 1 credit per character, so 1 is used here (checked 24 Nov 2026). Your ElevenLabs profile shows the real balance; credits reset on your sign-up date each month, not on the 1st.",
+    "zar_per_usd": "Approximate rate (16.3 to 16.8 across converters, latest dated figures July 2026). Only used to show Deepgram dollar amounts in rand.",
+    "gemini": "Google doesn't publish free-tier daily limits; AI Studio shows them per project. 15 requests per minute was confirmed by a real 429. The daily figure is a developer report, not confirmed (checked 24 Nov 2026)."
+  },
+  "deepgram": {
+    "free_credit_usd": 200,
+    "usd_per_streaming_minute": 0.0077
+  },
+  "zar_per_usd": 16.5,
+  "elevenlabs": {
+    "credits_per_month": 10000,
+    "credits_per_character": 1.0
+  },
+  "gemini": {
+    "requests_per_minute": 15,
+    "requests_per_day": 500,
+    "requests_per_day_confirmed": false
+  }
+}

@@ -11,7 +11,9 @@ last topic or when the call-length limit is reached. The transcript is saved to
 profiles/<call id>/ when the call ends, however it ends, then the candidate
 profile and role matches are built from it (screener.profile and
 screener.matching, the same code simulate.py uses). Recommendations start as
-pending; nothing is sent anywhere.
+pending; nothing is sent anywhere. Last, one row is appended to
+logs/usage.csv (screener.usage): call length, Deepgram audio seconds,
+ElevenLabs characters, Gemini requests and median reply latency.
 
 Run with:  uv run bot.py -t webrtc   then open http://localhost:7860/client
 """
@@ -45,11 +47,12 @@ from screener.call_end import CallEnder, CallTimeLimit, WrapUpMuteStrategy, end_
 from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, require_env
 from screener.interview import build_opening_line, load_interview_config
 from screener.latency import LatencyLog
-from screener.llm import interviewer_llm
+from screener.llm import RequestCounter, interviewer_llm
 from screener.matching import match_call
 from screener.profile import profile_call
 from screener.transcript import CANDIDATE, INTERVIEWER, TranscriptRecorder, now_iso
 from screener.turns import candidate_turn_strategies
+from screener.usage import UsageMeter, append_usage_row, usage_row
 
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
@@ -83,6 +86,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     )
 
     llm = interviewer_llm(config, interview, env["GOOGLE_API_KEY"])
+    interviewer_requests = RequestCounter(llm)
 
     tts = ElevenLabsTTSService(
         api_key=env["ELEVENLABS_API_KEY"],
@@ -123,11 +127,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     )
 
     latency_log = LatencyLog(call_id)
+    usage = UsageMeter()
 
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[latency_log.observer],
+        observers=[latency_log.observer, usage.observer],
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
     )
 
@@ -135,7 +140,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     transcript = TranscriptRecorder()
     time_limit = CallTimeLimit(ender, interview.max_call_seconds, interview.prompt.time_limit_goodbye)
-    call = {"started_at": None, "started_monotonic": None, "out_dir": None}
+    call = {"started_at": None, "started_monotonic": None, "duration": None, "out_dir": None}
 
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(_aggregator, _strategy, message: UserTurnStoppedMessage):
@@ -186,15 +191,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             },
         )
         call["out_dir"] = out_dir
+        call["duration"] = duration
         logger.info(f"Session {call_id}: transcript saved to {out_dir} ({len(transcript.turns)} turns)")
 
     await runner.add_workers(worker)
     await runner.run()
     logger.info(f"Session {call_id}: ended cleanly")
 
+    post_call_requests = 0
     if call.get("out_dir") and transcript.turns:
         try:
             result, requests = await profile_call(call["out_dir"], env["GOOGLE_API_KEY"])
+            post_call_requests += requests
             logger.info(
                 f"Session {call_id}: profile {result['status']} after {result['attempts']} attempt(s), "
                 f"{len(result['evidence_errors'])} evidence error(s), {requests} Gemini request(s)"
@@ -203,6 +211,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             logger.error(f"Session {call_id}: profile step failed: {type(e).__name__}: {e}")
         try:
             matches, requests = await match_call(call["out_dir"], env["GOOGLE_API_KEY"])
+            post_call_requests += requests
             outcomes = ", ".join(f"{r['role_id']}={r['recommendation']['outcome']}" for r in matches["roles"])
             logger.info(
                 f"Session {call_id}: matches {matches['status']} ({outcomes or 'none'}), "
@@ -210,6 +219,23 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             )
         except Exception as e:
             logger.error(f"Session {call_id}: matching step failed: {type(e).__name__}: {e}")
+
+    if call.get("out_dir"):
+        row = usage_row(
+            call_id=call_id,
+            mode="voice",
+            started_at=call["started_at"],
+            call_seconds=call["duration"],
+            deepgram_audio_seconds=usage.deepgram_audio_seconds,
+            elevenlabs_characters=usage.elevenlabs_characters,
+            gemini_requests=interviewer_requests.count + post_call_requests,
+            latencies_secs=latency_log.latencies_secs,
+        )
+        try:
+            append_usage_row(row)
+            logger.info(f"Session {call_id}: usage logged: {row}")
+        except OSError as e:
+            logger.error(f"Session {call_id}: could not write usage log: {e}")
 
 
 async def bot(runner_args: RunnerArguments):

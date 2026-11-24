@@ -8,7 +8,7 @@ Uses Gemini only (no Deepgram, no ElevenLabs). The interviewer is built by the
 same code as the voice bot. Each run saves profiles/<timestamp>-sim-<persona>/
 with transcript, profile and role matches, checks them against the persona's
 ground truth and config/personas/expected.json, and prints how many Gemini
-requests it used. Run it once per change, not in a loop: the free tier is the
+requests it used (also appended to logs/usage.csv). Run it once per change, not in a loop: the free tier is the
 budget.
 """
 
@@ -34,6 +34,7 @@ from screener.postcall import with_error_retries
 from screener.profile import describe_profile, load_schema, profile_call
 from screener.simulation import run_simulated_call
 from screener.transcript import INTERVIEWER, now_iso
+from screener.usage import append_usage_row, usage_row
 
 SIM_LOG_PATH = PROJECT_ROOT / "logs" / "simulate.log"
 
@@ -81,12 +82,22 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool, bool]:
     call_id = f"{datetime.now():%Y%m%d-%H%M%S}-sim-{persona_id}"
     print(f"\n=== Simulated call {call_id} (persona: {card['name']}) ===", flush=True)
     started_at, started = now_iso(), time.monotonic()
+
+    def log_usage(gemini_requests: int):
+        # No voice here, so no Deepgram audio, no ElevenLabs characters and no reply latency.
+        append_usage_row(usage_row(
+            call_id=call_id, mode="simulated", started_at=started_at,
+            call_seconds=time.monotonic() - started, deepgram_audio_seconds=0.0,
+            elevenlabs_characters=0, gemini_requests=gemini_requests, latencies_secs=[],
+        ))
+
     try:
         result = await run_simulated_call(interview, sim, interviewer_turn, persona_turn, on_turn=show)
     except Exception as e:
         print(f"\nFAILED: {type(e).__name__}: {e}")
         print(f"Gemini requests used: {requests_used()} "
               f"(interviewer {interviewer_requests.count}, persona {persona_requests.count})")
+        log_usage(requests_used())
         return requests_used(), False, False
 
     out_dir = result.transcript.save(
@@ -141,6 +152,7 @@ async def simulate_one(persona_id: str, api_key: str) -> tuple[int, bool, bool]:
     total = requests_used() + profile_requests + match_requests
     print(f"\nGemini requests used: {total} (interviewer {interviewer_requests.count}, "
           f"persona {persona_requests.count}, profile {profile_requests}, matching {match_requests})")
+    log_usage(total)
     return total, True, checks_ok and matches_ok
 
 

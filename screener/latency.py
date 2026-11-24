@@ -25,6 +25,7 @@ class LatencyLog:
         self._path = path
         self._turn = 0
         self._pending_secs: float | None = None
+        self.latencies_secs: list[float] = []  # one per user turn, for the usage log
         self.observer = UserBotLatencyObserver()
 
         # on_latency_measured fires only for user turns (not the greeting), and
@@ -38,6 +39,7 @@ class LatencyLog:
             if self._pending_secs is None:
                 return
             self._turn += 1
+            self.latencies_secs.append(self._pending_secs)
             self._write(self._pending_secs, breakdown)
             self._pending_secs = None
 

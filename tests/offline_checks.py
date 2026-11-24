@@ -1128,6 +1128,116 @@ def check_review_server():
           "<script src" not in html and "import " not in html.split("<script>")[1])
 
 
+async def settle():
+    """Pipecat runs event handlers as tasks; let them finish."""
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def check_usage_log():
+    section("Ticket 06: usage log and monthly totals")
+    from pipecat.frames.frames import MetricsFrame
+    from pipecat.metrics.metrics import STTUsage, STTUsageMetricsData, TTSUsageMetricsData
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, MeasuredFrom
+
+    from screener.latency import LatencyLog
+    from screener.usage import (
+        COLUMNS,
+        UsageMeter,
+        append_usage_row,
+        describe_totals,
+        load_usage_limits,
+        read_usage,
+        usage_row,
+    )
+
+    # Usage arrives the way Pipecat's services send it: MetricsFrames seen by ServiceMetricsObserver.
+    meter = UsageMeter()
+    src, dst = FrameProcessor(), FrameProcessor()
+    for data in (
+        STTUsageMetricsData(processor="DeepgramSTTService#0", model="m", value=STTUsage(audio_seconds=22.9)),
+        TTSUsageMetricsData(processor="ElevenLabsTTSService#0", model="m", value=52),
+        STTUsageMetricsData(processor="DeepgramSTTService#0", model="m", value=STTUsage(audio_seconds=13.44)),
+        TTSUsageMetricsData(processor="ElevenLabsTTSService#0", model="m", value=28),
+    ):
+        await meter.observer.on_push_frame(
+            FramePushed(source=src, destination=dst, frame=MetricsFrame(data=[data]),
+                        direction=FrameDirection.DOWNSTREAM, timestamp=0))
+    await settle()
+    check("usage meter sums Deepgram audio seconds from Pipecat's STT usage metrics",
+          abs(meter.deepgram_audio_seconds - 36.34) < 1e-6, f"{meter.deepgram_audio_seconds}")
+    check("usage meter sums ElevenLabs characters from Pipecat's TTS usage metrics",
+          meter.elevenlabs_characters == 80, f"{meter.elevenlabs_characters}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+
+        # Latency log keeps each turn's value for the median.
+        lat = LatencyLog("test", path=tmp / "latency.log")
+        breakdown = LatencyBreakdown.model_construct(measured_from=MeasuredFrom.USER_SILENCE, contributions=[])
+        for secs in (1.2, 3.0, 1.8):
+            await lat.observer._call_event_handler("on_latency_measured", secs)
+            await settle()
+            await lat.observer._call_event_handler("on_latency_breakdown", breakdown)
+            await settle()
+        check("latency log keeps one value per user turn for the usage log",
+              lat.latencies_secs == [1.2, 3.0, 1.8], f"{lat.latencies_secs}")
+
+        log = tmp / "usage.csv"
+        voice = usage_row(call_id="20261124-101500", mode="voice", started_at="2026-11-24T08:15:00.000+00:00",
+                          call_seconds=187.44, deepgram_audio_seconds=meter.deepgram_audio_seconds,
+                          elevenlabs_characters=meter.elevenlabs_characters, gemini_requests=17,
+                          latencies_secs=lat.latencies_secs)
+        sim = usage_row(call_id="20261124-111500-sim-thandi", mode="simulated",
+                        started_at="2026-11-24T09:15:00.000+00:00", call_seconds=95.0,
+                        deepgram_audio_seconds=0.0, elevenlabs_characters=0, gemini_requests=28, latencies_secs=[])
+        old = {**sim, "date": "2026-10-30", "call_id": "20261030-sim-old", "gemini_requests": 30}
+        for row in (voice, sim, old):
+            append_usage_row(row, path=log)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        rows = read_usage(log)
+        check("usage.csv gets one header line and one row per call",
+              lines[0] == ",".join(COLUMNS) and len(lines) == 4 and len(rows) == 3, f"{len(lines)} lines")
+        filled = [c for c in ("date", "call_seconds", "deepgram_audio_seconds", "elevenlabs_characters",
+                              "gemini_requests", "median_latency_secs") if rows[0][c] in ("", None)]
+        check("a voice call's row has all six values filled", filled == [], ", ".join(filled))
+        check("voice row values are right (median latency 1.8s, 36.3s audio, 80 characters)",
+              rows[0]["median_latency_secs"] == "1.8" and rows[0]["deepgram_audio_seconds"] == "36.3"
+              and rows[0]["elevenlabs_characters"] == "80" and rows[0]["call_seconds"] == "187.4",
+              f"{rows[0]}")
+        try:
+            append_usage_row({k: v for k, v in voice.items() if k != "gemini_requests"}, path=log)
+            check("a row missing a column is refused", False)
+        except ValueError:
+            check("a row missing a column is refused", True)
+
+        limits = load_usage_limits()
+        report = "\n".join(describe_totals(rows, limits, "2026-11", rows[0]["date"]))
+        check("monthly totals count only this month's calls",
+              "Calls logged: 2 (1 simulated, 1 voice)" in report and "This month: 45 requests" in report)
+        check("today's Gemini count is shown against the daily limit",
+              f"Today: 45 of about {limits.gemini_requests_per_day} per day" in report)
+        check("ElevenLabs characters are shown against the monthly credits",
+              f"of {limits.elevenlabs_credits_per_month:,} credits" in report and "This month: 80 characters" in report)
+
+        bad = tmp / "usage.json"
+        cfg = json.loads((ROOT / "config/usage.json").read_text(encoding="utf-8"))
+        cfg["elevenlabs"]["credits_per_month"] = 0
+        bad.write_text(json.dumps(cfg), encoding="utf-8")
+        try:
+            load_usage_limits(bad)
+            check("a zero limit in usage.json is refused", False)
+        except ConfigError:
+            check("a zero limit in usage.json is refused", True)
+
+    bot_src = (ROOT / "bot.py").read_text(encoding="utf-8")
+    sim_src = (ROOT / "simulate.py").read_text(encoding="utf-8")
+    check("voice bot counts usage and appends a row after each call",
+          "usage.observer" in bot_src and "RequestCounter(llm)" in bot_src and "append_usage_row(row)" in bot_src)
+    check("simulate.py appends a row for finished and failed runs", sim_src.count("log_usage(") == 3)
+
+
 async def main():
     check_voice_config()
     await check_gemini_retry()
@@ -1153,6 +1263,7 @@ async def main():
     await check_matching_paths()
     await check_roles_edit_changes_outcome()
     check_review_server()
+    await check_usage_log()
     print(f"\n{sum(results)}/{len(results)} passed")
     return all(results)
 
