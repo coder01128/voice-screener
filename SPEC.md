@@ -222,7 +222,7 @@ These are the decisions Brad should be able to explain in an interview.
 
 - **Why a cascade (STT → LLM → TTS) instead of a speech-to-speech model:** each stage can be swapped, measured and logged on its own, and it matches the stack Jem uses.
 - **Why SmallWebRTC:** peer-to-peer and free, with no Daily account. Pipecat's docs recommend Daily for production with many users on varied networks; this demo has one user on localhost.
-- **Why Flash-Lite:** the free-tier daily request limit, and a screening call needs speed more than reasoning depth.
+- **Why Flash-Lite:** a screening call needs speed more than reasoning depth, and Flash-Lite has the most usable free tier. In practice the limit that bites is 15 requests per minute per model (confirmed by a real 429), not the daily cap, so every Gemini request goes through one per-model pacer set to 14 a minute.
 - **Why evidence on every field:** so a person can check each claim against what the candidate actually said, rather than trusting the summary.
 - **Why the recommendation is computed in code, not by the LLM:** the rule is fixed, testable and explainable; the LLM only rates requirements against the transcript.
 - **Why nothing is sent automatically:** a hiring decision affects a real person, so a human approves it.
