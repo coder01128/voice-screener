@@ -35,14 +35,14 @@ from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-from pipecat.services.google.llm import GoogleLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 
 from screener.call_end import CallEnder, CallTimeLimit, WrapUpMuteStrategy, end_interview_tool
 from screener.config import PROJECT_ROOT, ConfigError, load_voice_config, require_env
-from screener.interview import build_interviewer_prompt, build_opening_line, load_interview_config
+from screener.interview import build_opening_line, load_interview_config
 from screener.latency import LatencyLog
+from screener.llm import interviewer_llm
 from screener.transcript import CANDIDATE, INTERVIEWER, TranscriptRecorder, now_iso
 from screener.turns import candidate_turn_strategies
 
@@ -77,15 +77,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         settings=DeepgramSTTService.Settings(model=config.stt_model),
     )
 
-    llm = GoogleLLMService(
-        api_key=env["GOOGLE_API_KEY"],
-        settings=GoogleLLMService.Settings(
-            model=config.llm_model,
-            system_instruction=build_interviewer_prompt(interview),
-        ),
-        retry_on_timeout=config.llm_retry_if_slow_to_start,
-        retry_timeout_secs=config.llm_first_reply_timeout_secs,
-    )
+    llm = interviewer_llm(config, interview, env["GOOGLE_API_KEY"])
 
     tts = ElevenLabsTTSService(
         api_key=env["ELEVENLABS_API_KEY"],

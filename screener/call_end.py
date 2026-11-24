@@ -119,6 +119,17 @@ class CallTimeLimit:
         await self._ender.end(END_REASON_TIME_LIMIT, self._goodbye_text, interrupt=True)
 
 
+def end_interview_schema(name: str, description: str, handler=None) -> FunctionSchema:
+    """The end-interview tool as the LLM sees it. Shared by the voice bot and simulate.py."""
+    return FunctionSchema(
+        name=name,
+        description=description,
+        properties={},
+        required=[],
+        handler=handler,
+    )
+
+
 def end_interview_tool(name: str, description: str, ender: CallEnder, closing_line: str) -> FunctionSchema:
     """The tool the LLM calls when every topic is covered. Code, not the LLM, says goodbye."""
 
@@ -130,10 +141,4 @@ def end_interview_tool(name: str, description: str, ender: CallEnder, closing_li
         )
         await ender.end(END_REASON_COMPLETE, closing_line, interrupt=False)
 
-    return FunctionSchema(
-        name=name,
-        description=description,
-        properties={},
-        required=[],
-        handler=handle_end_interview,
-    )
+    return end_interview_schema(name, description, handle_end_interview)

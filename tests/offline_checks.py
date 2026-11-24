@@ -403,6 +403,188 @@ async def check_gemini_retry():
     check("retry can be switched off in config", llm_off._retry_on_timeout is False)
 
 
+# ---------------------------------------------------------------- simulation (Ticket 02B)
+def check_personas():
+    section("Personas: the persona model sees the card only")
+    import screener.personas as personas
+    from screener.personas import build_persona_prompt, list_personas, load_card, load_simulation_config
+
+    sim = load_simulation_config()
+    check("simulation.json loads", True, f"persona model {sim.persona_model}, {sim.max_interviewer_turns} interviewer turns")
+    check("three personas found, expected.json is not a persona", list_personas() == ["lerato", "pieter", "thandi"])
+    for pid in list_personas():
+        card = load_card(pid)
+        prompt = build_persona_prompt(card, sim)
+        check(f"{pid}: prompt has the name and every card value, no unfilled placeholders",
+              card["name"] in prompt and all(str(v) in prompt for v in card.values())
+              and "{" not in prompt and "}" not in prompt)
+
+    secret = "GROUND-TRUTH-SECRET-7731"
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "probe.json").write_text(json.dumps({
+            "card": {"name": "Probe", "salary_stance": "won't say"},
+            "ground_truth": {"salary_expectation": secret, "notes": secret},
+        }), encoding="utf-8")
+        original_dir = personas.PERSONAS_DIR
+        personas.PERSONAS_DIR = Path(tmp)
+        try:
+            card = load_card("probe")
+            prompt = build_persona_prompt(card, sim)
+        finally:
+            personas.PERSONAS_DIR = original_dir
+    check("load_card returns the card section only", "ground_truth" not in card and secret not in json.dumps(card))
+    check("ground_truth never reaches the persona prompt", secret not in prompt)
+
+
+def check_interviewer_is_shared():
+    section("Voice bot and simulate.py share the interviewer (no copies)")
+    sources = {p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8")
+               for p in list(ROOT.glob("*.py")) + list((ROOT / "screener").glob("*.py"))}
+    builds_service = [n for n, s in sources.items() if "GoogleLLMService(" in s and n != "screener/llm.py"]
+    builds_prompt = [n for n, s in sources.items()
+                     if "build_interviewer_prompt(" in s and n not in ("screener/llm.py", "screener/interview.py")]
+    check("only screener/llm.py creates Gemini services", builds_service == [], ", ".join(builds_service))
+    check("only screener/llm.py calls the interviewer prompt builder", builds_prompt == [], ", ".join(builds_prompt))
+    check("bot.py and simulate.py both use interviewer_llm()",
+          "interviewer_llm(" in sources["bot.py"] and "interviewer_llm(" in sources["simulate.py"])
+    check("both use the same opening-line builder",
+          "build_opening_line(" in sources["bot.py"] and "build_opening_line(" in sources["screener/simulation.py"])
+
+
+async def check_simulated_request(cfg):
+    section("Simulated interviewer request = voice request (offline conversion)")
+    from screener.call_end import end_interview_schema
+    from screener.config import load_voice_config
+    from screener.interview import build_interviewer_prompt
+    from screener.llm import interviewer_llm
+
+    llm = interviewer_llm(load_voice_config(), cfg, "offline-dummy")
+    tool = end_interview_schema(cfg.prompt.end_tool_name, cfg.prompt.end_tool_description)
+    ctx = LLMContext(messages=[{"role": "assistant", "content": build_opening_line(cfg)},
+                               {"role": "user", "content": "I'm a junior developer."}], tools=[tool])
+    params = await llm.get_llm_adapter().get_llm_invocation_params(
+        ctx, system_instruction=llm._settings.system_instruction,
+        ensure_last_message_is_user=llm._should_inject_trailing_user_message())
+    tool_names = [f["name"] for t in params["tools"] for f in t.get("function_declarations", [])]
+    check("system instruction is the shared interviewer prompt",
+          params["system_instruction"] == build_interviewer_prompt(cfg))
+    check("end tool is advertised to Gemini", tool_names == [cfg.prompt.end_tool_name])
+    check("conversation keeps both turns in order", [m.role for m in params["messages"]] == ["model", "user"])
+
+
+def fake_interviewer(script: list):
+    """Returns an interviewer turn that plays back Reply objects in order."""
+    from screener.llm import Reply
+
+    queue = list(script)
+
+    async def turn(messages):
+        turn.views.append(messages)
+        return queue.pop(0) if queue else Reply(text="And another question?")
+
+    turn.views = []
+    return turn
+
+
+def fake_persona():
+    async def turn(messages):
+        turn.views.append(messages)
+        return f"Answer {len(turn.views)}."
+
+    turn.views = []
+    return turn
+
+
+async def check_simulation_loop(cfg):
+    section("Simulated call loop (fake Gemini, no requests)")
+    from screener.llm import Reply
+    from screener.personas import load_simulation_config
+    from screener.simulation import END_REASON_NO_INTERVIEWER_REPLY, run_simulated_call
+
+    sim = load_simulation_config()
+    end = cfg.prompt.end_tool_name
+
+    questions = [Reply(text=f"Question {i}?") for i in range(2, 7)] + [Reply(function_calls=[end])]
+    interviewer, persona = fake_interviewer(questions), fake_persona()
+    result = await run_simulated_call(cfg, sim, interviewer, persona)
+    turns = result.transcript.turns
+    check("normal finish: ends with the closing line from config",
+          result.end_reason == END_REASON_COMPLETE and turns[-1]["text"] == cfg.prompt.closing_line)
+    check("starts with the shared opening line", turns[0]["text"] == build_opening_line(cfg))
+    check("turns alternate interviewer/candidate, numbered 1..n",
+          [t["speaker"] for t in turns[:-1]] == [INTERVIEWER, CANDIDATE] * 6
+          and [t["turn"] for t in turns] == list(range(1, len(turns) + 1)))
+    check("same transcript format as voice", all(set(t) == {"turn", "speaker", "text", "started_at"} for t in turns))
+    check("interviewer sees itself as assistant, candidate as user",
+          [m["role"] for m in interviewer.views[0]] == ["assistant", "user"])
+    check("persona sees the interviewer as user, itself as assistant",
+          [m["role"] for m in persona.views[1]] == ["user", "assistant", "user"])
+
+    interviewer, persona = fake_interviewer([]), fake_persona()
+    result = await run_simulated_call(cfg, sim, interviewer, persona)
+    turns = result.transcript.turns
+    spoken_by_interviewer = sum(t["speaker"] == INTERVIEWER for t in turns)
+    check("turn limit: ends with the time-limit goodbye",
+          result.end_reason == END_REASON_TIME_LIMIT and turns[-1]["text"] == cfg.prompt.time_limit_goodbye)
+    check("turn limit: interviewer spoke max turns, then the goodbye",
+          spoken_by_interviewer == sim.max_interviewer_turns + 1, f"{spoken_by_interviewer} interviewer turns")
+
+    interviewer = fake_interviewer([Reply(text="Thanks, that's all.", function_calls=[end])])
+    result = await run_simulated_call(cfg, sim, interviewer, fake_persona())
+    check("text plus end tool in one reply: text, then the closing line",
+          [t["text"] for t in result.transcript.turns[-2:]] == ["Thanks, that's all.", cfg.prompt.closing_line])
+
+    result = await run_simulated_call(cfg, sim, fake_interviewer([Reply()]), fake_persona())
+    check("empty interviewer reply stops the run instead of looping",
+          result.end_reason == END_REASON_NO_INTERVIEWER_REPLY)
+
+
+async def check_reply_parsing_and_counting():
+    section("Gemini reply parsing and request counting (real Pipecat path, fake stream)")
+    from google.genai import types
+
+    from pipecat.services.google.llm import GoogleLLMService
+    from screener.llm import RequestCounter, reply
+
+    def chunk(*parts):
+        return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(role="model", parts=list(parts)))])
+
+    llm = GoogleLLMService(api_key="offline-dummy")
+
+    async def fake_stream(_ctx):
+        async def gen():
+            yield chunk(types.Part(text="Let me think about this.", thought=True))
+            yield chunk(types.Part(text="Thanks. "))
+            yield chunk(types.Part(text="Where are you based?"))
+            yield chunk(types.Part(function_call=types.FunctionCall(name="end_interview", args={})))
+        return gen()
+
+    llm._stream_content = fake_stream
+    counter = RequestCounter(llm)
+    r = await reply(llm, LLMContext())
+    check("text joined, Gemini's thinking text skipped", r.text == "Thanks. Where are you based?")
+    check("tool call captured", r.function_calls == ["end_interview"])
+    check("one request counted", counter.count == 1)
+
+    retrying = GoogleLLMService(api_key="offline-dummy", retry_on_timeout=True, retry_timeout_secs=0.2)
+    calls = []
+
+    async def stalls_once(_ctx):
+        calls.append(1)
+        stall = len(calls) == 1
+
+        async def gen():
+            if stall:
+                await asyncio.sleep(3)
+            yield chunk(types.Part(text="Hello."))
+        return gen()
+
+    retrying._stream_content = stalls_once
+    counter = RequestCounter(retrying)
+    r = await reply(retrying, LLMContext())
+    check("a slow-start retry counts as two requests", counter.count == 2 and r.text == "Hello.")
+
+
 async def main():
     check_voice_config()
     await check_gemini_retry()
@@ -413,6 +595,11 @@ async def main():
     await check_time_limit_hangup(cfg)
     await check_real_aggregator()
     await check_turn_start()
+    check_personas()
+    check_interviewer_is_shared()
+    await check_simulated_request(cfg)
+    await check_simulation_loop(cfg)
+    await check_reply_parsing_and_counting()
     print(f"\n{sum(results)}/{len(results)} passed")
     return all(results)
 

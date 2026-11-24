@@ -1,0 +1,14 @@
+{
+  "_note": "Expected recommendations per persona and role (Ticket 02B table). Role ids are provisional until config/roles.json exists in Ticket 04, which must use these ids; the checker will fail if an id here is missing from roles.json. Outcomes use the Ticket 04 vocabulary: advance, follow up, not a fit.",
+  "thandi": {
+    "react_developer": { "outcome": "advance" }
+  },
+  "pieter": {
+    "data_engineer": { "outcome": "follow up", "follow_up_must_mention": "cloud" }
+  },
+  "lerato": {
+    "react_developer": { "outcome": "not a fit" },
+    "data_engineer": { "outcome": "not a fit" },
+    "operations_coordinator": { "outcome": "advance" }
+  }
+}

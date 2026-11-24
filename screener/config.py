@@ -77,11 +77,14 @@ def load_voice_config(path: Path = VOICE_CONFIG_PATH) -> VoiceConfig:
     )
 
 
-def require_env() -> dict[str, str]:
+def require_env(names: tuple[str, ...] = REQUIRED_ENV) -> dict[str, str]:
     """Return the required env vars, or raise naming the missing ones (never the values)."""
-    missing = [name for name in REQUIRED_ENV if not os.getenv(name, "").strip()]
+    unknown = [name for name in names if name not in REQUIRED_ENV]
+    if unknown:
+        raise ConfigError(f"Not a known .env name: {', '.join(unknown)}")
+    missing = [name for name in names if not os.getenv(name, "").strip()]
     if missing:
         raise ConfigError(
             "Missing or empty in .env: " + ", ".join(missing) + ". Open .env in Notepad and paste the value after the '='."
         )
-    return {name: os.environ[name].strip() for name in REQUIRED_ENV}
+    return {name: os.environ[name].strip() for name in names}
